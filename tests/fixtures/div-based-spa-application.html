@@ -1,0 +1,60 @@
+<!-- 
+  Title: Div-based SPA Application Fixture
+  Purpose: Test detection and capture of modern web applications that render forms
+           inside <div>/section containers without a native <form> element.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Enterprise Portal - Project Intake</title>
+  </head>
+  <body>
+    <div id="app-root">
+      <nav class="portal-nav">
+        <span>SmartSimple Intake Portal</span>
+      </nav>
+
+      <main class="portal-main">
+        <div class="application-container" role="region" aria-label="Project Submission">
+          <h2>Project Intake Form</h2>
+
+          <div class="form-group">
+            <label for="spa-title">Project Name</label>
+            <input type="text" id="spa-title" value="NextGen Distributed Ledger" />
+          </div>
+
+          <div class="form-group">
+            <label for="spa-summary">Executive Summary</label>
+            <textarea id="spa-summary">A high-throughput local-first consensus engine.</textarea>
+          </div>
+
+          <div class="form-group" role="radiogroup" aria-label="Project Category">
+            <span class="group-label">Category:</span>
+            <label>
+              <input type="radio" name="spa_category" value="AI & Machine Learning" /> AI & Machine
+              Learning
+            </label>
+            <label>
+              <input type="radio" name="spa_category" value="Infrastructure & Systems" checked />
+              Infrastructure & Systems
+            </label>
+            <label>
+              <input type="radio" name="spa_category" value="Cybersecurity" /> Cybersecurity
+            </label>
+          </div>
+
+          <div class="form-group">
+            <label for="spa-budget">Estimated Budget</label>
+            <input type="number" id="spa-budget" value="150000" />
+          </div>
+
+          <div class="form-actions">
+            <button type="button" class="btn btn-secondary">Save Draft</button>
+            <button type="button" class="btn btn-primary">Next Step</button>
+          </div>
+        </div>
+      </main>
+    </div>
+  </body>
+</html>

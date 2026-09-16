@@ -96,6 +96,13 @@ h2 {
   margin-top: 4px;
 }
 
+.form-subtext {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: 10px;
+  margin-bottom: 0;
+}
+
 .actions {
   display: flex;
   gap: 12px;

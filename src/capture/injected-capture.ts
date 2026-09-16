@@ -1,7 +1,7 @@
 /**
  * Self-contained functions for injection via browser.scripting.executeScript.
- * These functions CANNOT import modules - all logic must be inlined.
- * They run in the web page's content script context.
+ * These functions CANNOT import external modules - all logic must be completely self-contained.
+ * They run in the web page's content script context across top frame and accessible child frames.
  */
 
 export interface InjectedCapturedField {
@@ -14,19 +14,29 @@ export interface InjectedCapturedField {
   excludeReason?: string;
 }
 
+export interface InjectedScanResult {
+  formDetected: boolean;
+  totalFields: number;
+  answeredCount: number;
+  score: number;
+  inaccessibleFrameDetected?: boolean;
+}
+
 export interface InjectedCaptureResult {
+  formDetected: boolean;
   fields: InjectedCapturedField[];
   excludedCount: number;
   totalDetected: number;
   includedCount: number;
+  answeredCount: number;
+  inaccessibleFrameDetected?: boolean;
 }
 
 /**
- * Scans the current page, finds form candidates, scores them, and returns the
- * capturable field count of the highest-scoring meaningful form candidate.
- * If only utility/search/empty forms exist, returns 0.
+ * Scans the current frame/document for candidate forms and scores them structurally.
+ * Detects real application forms even when all fields are completely blank.
  */
-export function countFormFields(): number {
+export function scanPageForms(): InjectedScanResult {
   const SENSITIVE_AUTOCOMPLETE = [
     'current-password',
     'new-password',
@@ -44,8 +54,57 @@ export function countFormFields(): number {
 
   const SEARCH_PATTERNS = /search|lookup|find|query|filter|nav|toolbar/i;
   const APPLICATION_PATTERNS =
-    /app|apply|grant|register|signup|contact|proposal|inquiry|feedback|survey|checkout|order/i;
-  const SUBMIT_BUTTON_PATTERNS = /submit|apply|send|save|register|complete|finish|continue|next/i;
+    /app|apply|grant|register|signup|contact|proposal|inquiry|feedback|survey|checkout|order|portal|form|intake|submission/i;
+  const SUBMIT_BUTTON_PATTERNS =
+    /submit|apply|send|save.?draft|save|register|complete|finish|continue|next|review|proceed|confirm/i;
+
+  function isVisible(el: HTMLElement): boolean {
+    if (el.hasAttribute('hidden')) return false;
+    if (el.getAttribute('aria-hidden') === 'true') return false;
+    if (el.style.display === 'none' || el.style.visibility === 'hidden') return false;
+    const hiddenAncestor = el.closest(
+      '[hidden], [aria-hidden="true"], [style*="display: none"], [style*="display:none"], [style*="visibility: hidden"], [style*="visibility:hidden"]',
+    );
+    if (hiddenAncestor) return false;
+    try {
+      const style = window.getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden') return false;
+    } catch {
+      // Ignore
+    }
+    return true;
+  }
+
+  function collectControls(root: ParentNode): HTMLElement[] {
+    const controls: HTMLElement[] = [];
+    function walk(node: Node) {
+      if (node instanceof HTMLElement) {
+        const tag = node.tagName.toLowerCase();
+        if (tag === 'input' || tag === 'textarea' || tag === 'select') {
+          const type = tag === 'input' ? (node as HTMLInputElement).type.toLowerCase() : '';
+          if (
+            type !== 'hidden' &&
+            type !== 'submit' &&
+            type !== 'button' &&
+            type !== 'image' &&
+            type !== 'reset'
+          ) {
+            if (isVisible(node)) controls.push(node);
+          }
+        }
+        if (node.shadowRoot) walk(node.shadowRoot);
+      }
+      const children = (node as Element).children || node.childNodes;
+      if (children) {
+        for (let i = 0; i < children.length; i++) {
+          const child = children[i];
+          if (child) walk(child);
+        }
+      }
+    }
+    walk(root);
+    return controls;
+  }
 
   function isUtility(container: Element): boolean {
     const role = container.getAttribute('role')?.toLowerCase();
@@ -57,28 +116,39 @@ export function countFormFields(): number {
     }
 
     const inputs = Array.from(container.querySelectorAll('input'));
-    const hasSearchInput = inputs.some(
+    const textareas = container.querySelectorAll('textarea');
+    const idAndClass = `${container.id} ${container.className}`.toLowerCase();
+
+    if (
+      SEARCH_PATTERNS.test(idAndClass) &&
+      !APPLICATION_PATTERNS.test(idAndClass) &&
+      textareas.length === 0
+    ) {
+      if (inputs.length <= 4) return true;
+    }
+
+    const hasSearchOrFilterInput = inputs.some(
       (inp) =>
         inp.type === 'search' ||
         inp.name === 'q' ||
         inp.name === 'query' ||
         inp.name === 'search' ||
+        inp.name.includes('filter') ||
+        inp.id.includes('filter') ||
         inp.getAttribute('aria-label')?.toLowerCase().includes('search'),
     );
-    const textareas = container.querySelectorAll('textarea');
-    if (hasSearchInput && inputs.length <= 3 && textareas.length === 0) {
+    if (hasSearchOrFilterInput && inputs.length <= 3 && textareas.length === 0) {
       return true;
     }
 
     if (container instanceof HTMLFormElement) {
-      const combined =
-        `${container.getAttribute('action') || ''} ${container.getAttribute('name') || ''} ${container.id} ${container.className}`.toLowerCase();
+      const combined = `${container.getAttribute('action') || ''} ${container.getAttribute('name') || ''} ${idAndClass}`;
       if (
         SEARCH_PATTERNS.test(combined) &&
         !APPLICATION_PATTERNS.test(combined) &&
         textareas.length === 0
       ) {
-        if (inputs.length <= 3) return true;
+        if (inputs.length <= 4) return true;
       }
     }
     return false;
@@ -96,17 +166,28 @@ export function countFormFields(): number {
     return SENSITIVE_PATTERN.test(combined);
   }
 
-  function isMeaningfulId(str: string): boolean {
-    const clean = str.trim();
-    if (!clean || clean.length < 2) return false;
-    return !/^(input|field|ctrl|elem|control|form_field|txt|_)[0-9_]*$/i.test(clean);
-  }
-
   function getLabelText(el: HTMLElement): string {
     if (el.id) {
       const l = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
       if (l?.textContent?.trim()) return l.textContent.trim();
     }
+
+    if (el instanceof HTMLInputElement && el.type === 'radio') {
+      const group = el.closest('[role="group"], [role="radiogroup"]');
+      if (group) {
+        const gLabel = group.getAttribute('aria-label');
+        if (gLabel?.trim()) return gLabel.trim();
+        const gLabelledby = group.getAttribute('aria-labelledby');
+        if (gLabelledby) {
+          const parts = gLabelledby
+            .split(/\s+/)
+            .map((refId) => document.getElementById(refId)?.textContent?.trim())
+            .filter(Boolean);
+          if (parts.length > 0) return parts.join(' ');
+        }
+      }
+    }
+
     const wrap = el.closest('label');
     if (wrap?.textContent?.trim()) {
       const clone = wrap.cloneNode(true) as HTMLElement;
@@ -131,14 +212,26 @@ export function countFormFields(): number {
       if (leg?.textContent?.trim()) return leg.textContent.trim();
     }
 
+    const questionCard = el.closest(
+      '[role="listitem"], .form-group, .question, .field, .form-row, .field-wrapper',
+    );
+    if (questionCard) {
+      const heading = questionCard.querySelector<HTMLElement>(
+        'h1, h2, h3, h4, h5, h6, [role="heading"], .question-title, .field-label',
+      );
+      if (heading?.textContent?.trim() && !heading.contains(el)) {
+        return heading.textContent.trim();
+      }
+    }
+
     const placeholder = el.getAttribute('placeholder');
     if (placeholder?.trim()) return placeholder.trim();
 
     const name = el.getAttribute('name');
-    if (name && isMeaningfulId(name)) return name.trim();
+    if (name?.trim()) return name.trim();
 
     const id = el.getAttribute('id');
-    if (id && isMeaningfulId(id)) return id.trim();
+    if (id?.trim()) return id.trim();
 
     return '';
   }
@@ -155,9 +248,7 @@ export function countFormFields(): number {
       }
       return el.value.trim();
     }
-    if (el instanceof HTMLTextAreaElement) {
-      return el.value.trim();
-    }
+    if (el instanceof HTMLTextAreaElement) return el.value.trim();
     if (el instanceof HTMLSelectElement) {
       const opts = Array.from(el.selectedOptions);
       if (opts.length === 1 && opts[0]) {
@@ -172,104 +263,270 @@ export function countFormFields(): number {
     return '';
   }
 
-  // Find candidate containers
+  const allControls = collectControls(document.body || document.documentElement);
+  if (allControls.length === 0) {
+    const hasIframes = document.querySelectorAll('iframe').length > 0;
+    return {
+      formDetected: false,
+      totalFields: 0,
+      answeredCount: 0,
+      score: 0,
+      inaccessibleFrameDetected: hasIframes,
+    };
+  }
+
+  interface ScoredCandidate {
+    container: Element;
+    totalFields: number;
+    answeredCount: number;
+    score: number;
+  }
+
+  const assigned = new Set<HTMLElement>();
+  const scoredCandidates: ScoredCandidate[] = [];
+
+  // Grouping 1: Native <form> elements
   const forms = Array.from(document.querySelectorAll('form'));
-  let containers: Element[] = forms;
-  if (containers.length === 0) {
-    const roleForms = Array.from(document.querySelectorAll('[role="form"]'));
-    if (roleForms.length > 0) {
-      containers = roleForms;
-    } else {
-      const main = document.querySelector('main');
-      if (main && main.querySelectorAll('input, textarea, select').length >= 2) {
-        containers = [main];
-      } else {
-        containers = [document.body || document.documentElement];
+  for (const form of forms) {
+    const inside = allControls.filter((c) => form.contains(c));
+    const associated = form.id
+      ? allControls.filter(
+          (c) =>
+            !form.contains(c) &&
+            (c.getAttribute('form') === form.id || (c as HTMLInputElement).form === form),
+        )
+      : [];
+    const elements = Array.from(new Set([...inside, ...associated]));
+    if (elements.length > 0) {
+      elements.forEach((c) => assigned.add(c));
+      evaluateCandidate(form, elements);
+    }
+  }
+
+  // Grouping 2: [role="form"]
+  const unassignedAfterForms = allControls.filter((c) => !assigned.has(c));
+  const roleForms = Array.from(document.querySelectorAll('[role="form"]'));
+  for (const rf of roleForms) {
+    const matching = unassignedAfterForms.filter((c) => !assigned.has(c) && rf.contains(c));
+    if (matching.length > 0) {
+      matching.forEach((c) => assigned.add(c));
+      evaluateCandidate(rf, matching);
+    }
+  }
+
+  // Grouping 3: Semantic SPA containers or fieldsets
+  const unassignedAfterRoles = allControls.filter((c) => !assigned.has(c));
+  if (unassignedAfterRoles.length > 0) {
+    const containers = Array.from(
+      document.querySelectorAll(
+        '[role="tabpanel"], [role="region"], fieldset, section, article, div, main',
+      ),
+    ).filter((el) => {
+      if (el === document.body || el === document.documentElement) return false;
+      const idAndClass = `${el.id} ${el.className}`;
+      const role = el.getAttribute('role');
+      return (
+        role === 'tabpanel' ||
+        role === 'region' ||
+        el.tagName.toLowerCase() === 'fieldset' ||
+        APPLICATION_PATTERNS.test(idAndClass)
+      );
+    });
+
+    for (const c of containers) {
+      const matching = unassignedAfterRoles.filter(
+        (ctrl) => !assigned.has(ctrl) && c.contains(ctrl),
+      );
+      if (
+        matching.length >= 2 ||
+        (matching.length >= 1 && matching.some((ctrl) => ctrl instanceof HTMLTextAreaElement))
+      ) {
+        matching.forEach((ctrl) => assigned.add(ctrl));
+        evaluateCandidate(c, matching);
       }
     }
   }
 
-  let bestCount = 0;
-  let bestScore = -999;
+  // Grouping 4: Proximity clusters for remaining controls
+  const remaining = allControls.filter((c) => !assigned.has(c));
+  if (remaining.length > 0) {
+    const clusters = new Map<Element, HTMLElement[]>();
+    for (const ctrl of remaining) {
+      let parent: Element | null = ctrl.parentElement;
+      while (
+        parent &&
+        parent !== document.body &&
+        parent !== document.documentElement &&
+        parent.tagName.toLowerCase() !== 'main' &&
+        parent.parentElement &&
+        parent.parentElement !== document.body &&
+        parent.querySelectorAll('input, textarea, select').length <= 20
+      ) {
+        if (
+          parent.tagName.toLowerCase() === 'div' ||
+          parent.tagName.toLowerCase() === 'section' ||
+          parent.tagName.toLowerCase() === 'article' ||
+          parent.tagName.toLowerCase() === 'fieldset'
+        ) {
+          break;
+        }
+        parent = parent.parentElement;
+      }
+      const clusterCont = parent || ctrl.parentElement || document.body;
+      const list = clusters.get(clusterCont) || [];
+      list.push(ctrl);
+      clusters.set(clusterCont, list);
+    }
 
-  for (const container of containers) {
-    if (isUtility(container)) continue;
+    for (const [cont, clusterCtrls] of clusters.entries()) {
+      evaluateCandidate(cont, clusterCtrls);
+    }
+  }
 
-    const elements = Array.from(
-      container.querySelectorAll<HTMLElement>(
-        'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"]), textarea, select',
-      ),
-    );
+  function evaluateCandidate(container: Element, elements: HTMLElement[]) {
+    if (isUtility(container)) return;
 
-    let count = 0;
+    let totalMeaningful = 0;
+    let answered = 0;
     let score = 0;
     let textareaCount = 0;
     const seenRadioGroups = new Set<string>();
+    const labelsSeen = new Set<string>();
 
     for (const el of elements) {
-      if (isSensitive(el)) continue;
+      if (isSensitive(el)) {
+        totalMeaningful++;
+        continue;
+      }
 
       const label = getLabelText(el);
-      if (!label) continue; // Unknown Field Policy
+      if (!label) continue;
 
       if (el instanceof HTMLInputElement && el.type === 'radio' && el.name) {
         if (seenRadioGroups.has(el.name)) continue;
         seenRadioGroups.add(el.name);
+        totalMeaningful++;
+        score += 15;
+        labelsSeen.add(label.toLowerCase());
+
         const checked = container.querySelector(
           `input[type="radio"][name="${CSS.escape(el.name)}"]:checked`,
         );
-        if (!checked) continue; // Unselected radio -> omit
-        count++;
-        score += 15;
+        if (checked) answered++;
         continue;
       }
 
-      const val = getFieldValue(el);
-      if (!val) continue; // Empty Field Policy
+      totalMeaningful++;
+      labelsSeen.add(label.toLowerCase());
 
-      count++;
+      const val = getFieldValue(el);
+      if (val) answered++;
+
       if (el instanceof HTMLTextAreaElement) {
         textareaCount++;
         score += 25;
+      } else if (
+        el instanceof HTMLInputElement &&
+        ['email', 'tel', 'url', 'number', 'date'].includes(el.type)
+      ) {
+        score += 15;
+      } else if (
+        el instanceof HTMLSelectElement ||
+        (el instanceof HTMLInputElement && el.type === 'checkbox')
+      ) {
+        score += 12;
       } else {
         score += 10;
       }
     }
 
-    if (count >= 3) score += 20;
+    if (totalMeaningful >= 2) score += 15;
+    if (totalMeaningful >= 4) score += 20;
+    if (totalMeaningful >= 8) score += 25;
     if (textareaCount >= 2) score += 30;
+    if (labelsSeen.size >= 3) score += 15;
 
-    if (container instanceof HTMLFormElement) {
-      const idAndClass = `${container.id} ${container.className}`.toLowerCase();
-      if (APPLICATION_PATTERNS.test(idAndClass)) score += 25;
-      const submitBtn = container.querySelector(
-        'button[type="submit"], input[type="submit"], button:not([type])',
-      );
-      if (submitBtn) {
-        const btnText = (
-          submitBtn.textContent ||
-          (submitBtn as HTMLInputElement).value ||
-          ''
-        ).trim();
-        if (SUBMIT_BUTTON_PATTERNS.test(btnText)) score += 25;
-      }
+    if (container.tagName.toLowerCase() === 'form') score += 15;
+    if (container.getAttribute('role') === 'form') score += 15;
+
+    const idAndClass = `${container.id} ${container.className}`.toLowerCase();
+    if (APPLICATION_PATTERNS.test(idAndClass)) score += 20;
+
+    const btns = Array.from(
+      container.querySelectorAll(
+        'button, input[type="submit"], input[type="button"], a.btn, div[role="button"]',
+      ),
+    );
+    const hasWorkflow = btns.some((b) => {
+      const txt = (b.textContent || (b as HTMLInputElement).value || '').trim();
+      return SUBMIT_BUTTON_PATTERNS.test(txt);
+    });
+    if (hasWorkflow) score += 25;
+
+    if (answered > 0) score += Math.min(answered * 3, 15);
+
+    if (totalMeaningful < 2 && textareaCount === 0) {
+      score -= 50;
+    } else if (
+      totalMeaningful <= 2 &&
+      textareaCount === 0 &&
+      !hasWorkflow &&
+      !APPLICATION_PATTERNS.test(idAndClass)
+    ) {
+      score -= 40;
     }
 
-    if (count < 2 && textareaCount === 0) score -= 40;
-
-    // Minimum score threshold
-    if (score >= 30 && count >= 1 && score > bestScore) {
-      bestScore = score;
-      bestCount = count;
+    if (score >= 30 && totalMeaningful >= 1) {
+      scoredCandidates.push({
+        container,
+        totalFields: totalMeaningful,
+        answeredCount: answered,
+        score,
+      });
     }
   }
 
-  return bestCount;
+  const hasIframes = document.querySelectorAll('iframe').length > 0;
+  if (scoredCandidates.length === 0) {
+    return {
+      formDetected: false,
+      totalFields: 0,
+      answeredCount: 0,
+      score: 0,
+      inaccessibleFrameDetected: hasIframes,
+    };
+  }
+
+  scoredCandidates.sort((a, b) => b.score - a.score);
+  const best = scoredCandidates[0];
+  if (!best) {
+    return {
+      formDetected: false,
+      totalFields: 0,
+      answeredCount: 0,
+      score: 0,
+      inaccessibleFrameDetected: hasIframes,
+    };
+  }
+
+  return {
+    formDetected: true,
+    totalFields: best.totalFields,
+    answeredCount: best.answeredCount,
+    score: best.score,
+    inaccessibleFrameDetected: false,
+  };
 }
 
 /**
- * Captures form fields from the highest-scoring meaningful form candidate on the current page.
- * Strictly ignores utility/search forms, empty optional fields, empty file inputs, and unknown fields.
+ * Backwards compatibility alias for countFormFields.
+ */
+export function countFormFields(): InjectedScanResult {
+  return scanPageForms();
+}
+
+/**
+ * Captures non-empty answers and sensitive fields from the highest-scoring candidate.
  */
 export function capturePageForms(): InjectedCaptureResult {
   const SENSITIVE_AUTOCOMPLETE = [
@@ -289,8 +546,57 @@ export function capturePageForms(): InjectedCaptureResult {
 
   const SEARCH_PATTERNS = /search|lookup|find|query|filter|nav|toolbar/i;
   const APPLICATION_PATTERNS =
-    /app|apply|grant|register|signup|contact|proposal|inquiry|feedback|survey|checkout|order/i;
-  const SUBMIT_BUTTON_PATTERNS = /submit|apply|send|save|register|complete|finish|continue|next/i;
+    /app|apply|grant|register|signup|contact|proposal|inquiry|feedback|survey|checkout|order|portal|form|intake|submission/i;
+  const SUBMIT_BUTTON_PATTERNS =
+    /submit|apply|send|save.?draft|save|register|complete|finish|continue|next|review|proceed|confirm/i;
+
+  function isVisible(el: HTMLElement): boolean {
+    if (el.hasAttribute('hidden')) return false;
+    if (el.getAttribute('aria-hidden') === 'true') return false;
+    if (el.style.display === 'none' || el.style.visibility === 'hidden') return false;
+    const hiddenAncestor = el.closest(
+      '[hidden], [aria-hidden="true"], [style*="display: none"], [style*="display:none"], [style*="visibility: hidden"], [style*="visibility:hidden"]',
+    );
+    if (hiddenAncestor) return false;
+    try {
+      const style = window.getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden') return false;
+    } catch {
+      // Ignore
+    }
+    return true;
+  }
+
+  function collectControls(root: ParentNode): HTMLElement[] {
+    const controls: HTMLElement[] = [];
+    function walk(node: Node) {
+      if (node instanceof HTMLElement) {
+        const tag = node.tagName.toLowerCase();
+        if (tag === 'input' || tag === 'textarea' || tag === 'select') {
+          const type = tag === 'input' ? (node as HTMLInputElement).type.toLowerCase() : '';
+          if (
+            type !== 'hidden' &&
+            type !== 'submit' &&
+            type !== 'button' &&
+            type !== 'image' &&
+            type !== 'reset'
+          ) {
+            if (isVisible(node)) controls.push(node);
+          }
+        }
+        if (node.shadowRoot) walk(node.shadowRoot);
+      }
+      const children = (node as Element).children || node.childNodes;
+      if (children) {
+        for (let i = 0; i < children.length; i++) {
+          const child = children[i];
+          if (child) walk(child);
+        }
+      }
+    }
+    walk(root);
+    return controls;
+  }
 
   function isUtility(container: Element): boolean {
     const role = container.getAttribute('role')?.toLowerCase();
@@ -302,28 +608,39 @@ export function capturePageForms(): InjectedCaptureResult {
     }
 
     const inputs = Array.from(container.querySelectorAll('input'));
-    const hasSearchInput = inputs.some(
+    const textareas = container.querySelectorAll('textarea');
+    const idAndClass = `${container.id} ${container.className}`.toLowerCase();
+
+    if (
+      SEARCH_PATTERNS.test(idAndClass) &&
+      !APPLICATION_PATTERNS.test(idAndClass) &&
+      textareas.length === 0
+    ) {
+      if (inputs.length <= 4) return true;
+    }
+
+    const hasSearchOrFilterInput = inputs.some(
       (inp) =>
         inp.type === 'search' ||
         inp.name === 'q' ||
         inp.name === 'query' ||
         inp.name === 'search' ||
+        inp.name.includes('filter') ||
+        inp.id.includes('filter') ||
         inp.getAttribute('aria-label')?.toLowerCase().includes('search'),
     );
-    const textareas = container.querySelectorAll('textarea');
-    if (hasSearchInput && inputs.length <= 3 && textareas.length === 0) {
+    if (hasSearchOrFilterInput && inputs.length <= 3 && textareas.length === 0) {
       return true;
     }
 
     if (container instanceof HTMLFormElement) {
-      const combined =
-        `${container.getAttribute('action') || ''} ${container.getAttribute('name') || ''} ${container.id} ${container.className}`.toLowerCase();
+      const combined = `${container.getAttribute('action') || ''} ${container.getAttribute('name') || ''} ${idAndClass}`;
       if (
         SEARCH_PATTERNS.test(combined) &&
         !APPLICATION_PATTERNS.test(combined) &&
         textareas.length === 0
       ) {
-        if (inputs.length <= 3) return true;
+        if (inputs.length <= 4) return true;
       }
     }
     return false;
@@ -341,30 +658,36 @@ export function capturePageForms(): InjectedCaptureResult {
     return SENSITIVE_PATTERN.test(combined);
   }
 
-  function isMeaningfulId(str: string): boolean {
-    const clean = str.trim();
-    if (!clean || clean.length < 2) return false;
-    return !/^(input|field|ctrl|elem|control|form_field|txt|_)[0-9_]*$/i.test(clean);
-  }
-
-  function normalizeText(text: string): string {
-    const normalized = text.replace(/\s+/g, ' ').trim();
-    return normalized.length > 500 ? normalized.substring(0, 497) + '...' : normalized;
-  }
-
-  function getLabelInfo(el: HTMLElement): { label: string; source: string } {
+  function getLabelText(el: HTMLElement): string {
     if (el.id) {
       const l = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
       if (l?.textContent?.trim()) {
-        return { label: normalizeText(l.textContent), source: 'label-for' };
+        return l.textContent.trim();
       }
     }
+
+    if (el instanceof HTMLInputElement && el.type === 'radio') {
+      const group = el.closest('[role="group"], [role="radiogroup"]');
+      if (group) {
+        const gLabel = group.getAttribute('aria-label');
+        if (gLabel?.trim()) return gLabel.trim();
+        const gLabelledby = group.getAttribute('aria-labelledby');
+        if (gLabelledby) {
+          const parts = gLabelledby
+            .split(/\s+/)
+            .map((refId) => document.getElementById(refId)?.textContent?.trim())
+            .filter(Boolean);
+          if (parts.length > 0) return parts.join(' ');
+        }
+      }
+    }
+
     const wrap = el.closest('label');
     if (wrap?.textContent?.trim()) {
       const clone = wrap.cloneNode(true) as HTMLElement;
       clone.querySelectorAll('input, textarea, select').forEach((i) => i.remove());
       const t = clone.textContent?.trim();
-      if (t) return { label: normalizeText(t), source: 'wrapping-label' };
+      if (t) return t;
     }
     const ariaLabelledby = el.getAttribute('aria-labelledby');
     if (ariaLabelledby) {
@@ -373,38 +696,50 @@ export function capturePageForms(): InjectedCaptureResult {
         .map((refId) => document.getElementById(refId)?.textContent?.trim())
         .filter(Boolean);
       if (parts.length > 0) {
-        return { label: normalizeText(parts.join(' ')), source: 'aria-labelledby' };
+        return parts.join(' ');
       }
     }
     const ariaLabel = el.getAttribute('aria-label');
     if (ariaLabel?.trim()) {
-      return { label: normalizeText(ariaLabel), source: 'aria-label' };
+      return ariaLabel.trim();
     }
 
     const fieldset = el.closest('fieldset');
     if (fieldset) {
       const leg = fieldset.querySelector('legend');
       if (leg?.textContent?.trim()) {
-        return { label: normalizeText(leg.textContent), source: 'nearby-text' };
+        return leg.textContent.trim();
+      }
+    }
+
+    const questionCard = el.closest(
+      '[role="listitem"], .form-group, .question, .field, .form-row, .field-wrapper',
+    );
+    if (questionCard) {
+      const heading = questionCard.querySelector<HTMLElement>(
+        'h1, h2, h3, h4, h5, h6, [role="heading"], .question-title, .field-label',
+      );
+      if (heading?.textContent?.trim() && !heading.contains(el)) {
+        return heading.textContent.trim();
       }
     }
 
     const placeholder = el.getAttribute('placeholder');
     if (placeholder?.trim()) {
-      return { label: normalizeText(placeholder), source: 'placeholder' };
+      return placeholder.trim();
     }
 
     const name = el.getAttribute('name');
-    if (name && isMeaningfulId(name)) {
-      return { label: normalizeText(name), source: 'name-fallback' };
+    if (name?.trim()) {
+      return name.trim();
     }
 
     const id = el.getAttribute('id');
-    if (id && isMeaningfulId(id)) {
-      return { label: normalizeText(id), source: 'id-fallback' };
+    if (id?.trim()) {
+      return id.trim();
     }
 
-    return { label: '', source: 'unknown' };
+    return '';
   }
 
   function getFieldValue(el: HTMLElement): string {
@@ -417,11 +752,9 @@ export function capturePageForms(): InjectedCaptureResult {
               .join(', ')} selected`
           : '';
       }
-      return el.value.replace(/\s+/g, ' ').trim();
+      return el.value.trim();
     }
-    if (el instanceof HTMLTextAreaElement) {
-      return el.value.replace(/\s+/g, ' ').trim();
-    }
+    if (el instanceof HTMLTextAreaElement) return el.value.trim();
     if (el instanceof HTMLSelectElement) {
       const opts = Array.from(el.selectedOptions);
       if (opts.length === 1 && opts[0]) {
@@ -436,50 +769,146 @@ export function capturePageForms(): InjectedCaptureResult {
     return '';
   }
 
-  // Find candidate containers
+  const allControls = collectControls(document.body || document.documentElement);
+  if (allControls.length === 0) {
+    const hasIframes = document.querySelectorAll('iframe').length > 0;
+    return {
+      formDetected: false,
+      fields: [],
+      excludedCount: 0,
+      totalDetected: 0,
+      includedCount: 0,
+      answeredCount: 0,
+      inaccessibleFrameDetected: hasIframes,
+    };
+  }
+
+  interface ProcessedCandidate {
+    fields: InjectedCapturedField[];
+    score: number;
+    excludedCount: number;
+    totalDetected: number;
+    answeredCount: number;
+  }
+
+  const assigned = new Set<HTMLElement>();
+  const candidates: ProcessedCandidate[] = [];
+
+  // Grouping 1: Native <form> elements
   const forms = Array.from(document.querySelectorAll('form'));
-  let containers: Element[] = forms;
-  if (containers.length === 0) {
-    const roleForms = Array.from(document.querySelectorAll('[role="form"]'));
-    if (roleForms.length > 0) {
-      containers = roleForms;
-    } else {
-      const main = document.querySelector('main');
-      if (main && main.querySelectorAll('input, textarea, select').length >= 2) {
-        containers = [main];
-      } else {
-        containers = [document.body || document.documentElement];
+  for (const form of forms) {
+    const inside = allControls.filter((c) => form.contains(c));
+    const associated = form.id
+      ? allControls.filter(
+          (c) =>
+            !form.contains(c) &&
+            (c.getAttribute('form') === form.id || (c as HTMLInputElement).form === form),
+        )
+      : [];
+    const elements = Array.from(new Set([...inside, ...associated]));
+    if (elements.length > 0) {
+      elements.forEach((c) => assigned.add(c));
+      evaluateCandidate(form, elements);
+    }
+  }
+
+  // Grouping 2: [role="form"]
+  const unassignedAfterForms = allControls.filter((c) => !assigned.has(c));
+  const roleForms = Array.from(document.querySelectorAll('[role="form"]'));
+  for (const rf of roleForms) {
+    const matching = unassignedAfterForms.filter((c) => !assigned.has(c) && rf.contains(c));
+    if (matching.length > 0) {
+      matching.forEach((c) => assigned.add(c));
+      evaluateCandidate(rf, matching);
+    }
+  }
+
+  // Grouping 3: Semantic containers
+  const unassignedAfterRoles = allControls.filter((c) => !assigned.has(c));
+  if (unassignedAfterRoles.length > 0) {
+    const containers = Array.from(
+      document.querySelectorAll(
+        '[role="tabpanel"], [role="region"], fieldset, section, article, div, main',
+      ),
+    ).filter((el) => {
+      if (el === document.body || el === document.documentElement) return false;
+      const idAndClass = `${el.id} ${el.className}`;
+      const role = el.getAttribute('role');
+      return (
+        role === 'tabpanel' ||
+        role === 'region' ||
+        el.tagName.toLowerCase() === 'fieldset' ||
+        APPLICATION_PATTERNS.test(idAndClass)
+      );
+    });
+
+    for (const c of containers) {
+      const matching = unassignedAfterRoles.filter(
+        (ctrl) => !assigned.has(ctrl) && c.contains(ctrl),
+      );
+      if (
+        matching.length >= 2 ||
+        (matching.length >= 1 && matching.some((ctrl) => ctrl instanceof HTMLTextAreaElement))
+      ) {
+        matching.forEach((ctrl) => assigned.add(ctrl));
+        evaluateCandidate(c, matching);
       }
     }
   }
 
-  interface CandidateResult {
-    fields: InjectedCapturedField[];
-    score: number;
-    excludedCount: number;
+  // Grouping 4: Proximity clusters
+  const remaining = allControls.filter((c) => !assigned.has(c));
+  if (remaining.length > 0) {
+    const clusters = new Map<Element, HTMLElement[]>();
+    for (const ctrl of remaining) {
+      let parent: Element | null = ctrl.parentElement;
+      while (
+        parent &&
+        parent !== document.body &&
+        parent !== document.documentElement &&
+        parent.tagName.toLowerCase() !== 'main' &&
+        parent.parentElement &&
+        parent.parentElement !== document.body &&
+        parent.querySelectorAll('input, textarea, select').length <= 20
+      ) {
+        if (
+          parent.tagName.toLowerCase() === 'div' ||
+          parent.tagName.toLowerCase() === 'section' ||
+          parent.tagName.toLowerCase() === 'article' ||
+          parent.tagName.toLowerCase() === 'fieldset'
+        ) {
+          break;
+        }
+        parent = parent.parentElement;
+      }
+      const clusterCont = parent || ctrl.parentElement || document.body;
+      const list = clusters.get(clusterCont) || [];
+      list.push(ctrl);
+      clusters.set(clusterCont, list);
+    }
+
+    for (const [cont, clusterCtrls] of clusters.entries()) {
+      evaluateCandidate(cont, clusterCtrls);
+    }
   }
 
-  const candidateResults: CandidateResult[] = [];
-
-  for (const container of containers) {
-    if (isUtility(container)) continue;
-
-    const elements = Array.from(
-      container.querySelectorAll<HTMLElement>(
-        'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"]), textarea, select',
-      ),
-    );
+  function evaluateCandidate(container: Element, elements: HTMLElement[]) {
+    if (isUtility(container)) return;
 
     const fields: InjectedCapturedField[] = [];
     let excludedCount = 0;
+    let totalMeaningful = 0;
+    let answered = 0;
     let score = 0;
     let textareaCount = 0;
     const seenRadioGroups = new Set<string>();
+    const labelsSeen = new Set<string>();
 
     for (const el of elements) {
       if (isSensitive(el)) {
         excludedCount++;
-        const labelInfo = getLabelInfo(el);
+        totalMeaningful++;
+        const labelInfo = getLabelText(el);
         const fType =
           el instanceof HTMLTextAreaElement
             ? 'textarea'
@@ -488,18 +917,21 @@ export function capturePageForms(): InjectedCaptureResult {
               : (el as HTMLInputElement).type || 'text';
         fields.push({
           id: crypto.randomUUID(),
-          label: labelInfo.label || 'Sensitive Field',
+          label: labelInfo || 'Sensitive Field',
           value: '',
           fieldType: fType,
-          labelSource: labelInfo.source || 'unknown',
+          labelSource: 'unknown',
           excluded: true,
           excludeReason: 'Sensitive field excluded for privacy',
         });
         continue;
       }
 
-      const labelInfo = getLabelInfo(el);
-      if (!labelInfo.label) continue; // Unknown Field Policy: exclude unlabeled controls
+      const labelInfo = getLabelText(el);
+      if (!labelInfo) continue; // Unknown Field Policy: exclude unlabeled controls
+
+      totalMeaningful++;
+      labelsSeen.add(labelInfo.toLowerCase());
 
       // Radio group consolidation
       if (el instanceof HTMLInputElement && el.type === 'radio' && el.name) {
@@ -510,19 +942,19 @@ export function capturePageForms(): InjectedCaptureResult {
           `input[type="radio"][name="${CSS.escape(el.name)}"]`,
         );
         const checked = Array.from(radios).find((r) => r.checked);
-        if (!checked) continue; // Unselected radio group -> omit
-
-        const checkedLabel = getLabelInfo(checked);
-        const radioVal = checkedLabel.label || checked.value || 'Selected';
-
-        fields.push({
-          id: crypto.randomUUID(),
-          label: labelInfo.label,
-          value: radioVal,
-          fieldType: 'radio',
-          labelSource: labelInfo.source,
-          excluded: false,
-        });
+        if (checked) {
+          answered++;
+          const checkedLabel = getLabelText(checked);
+          const radioVal = checkedLabel || checked.value || 'Selected';
+          fields.push({
+            id: crypto.randomUUID(),
+            label: labelInfo,
+            value: radioVal,
+            fieldType: 'radio',
+            labelSource: 'role-label',
+            excluded: false,
+          });
+        }
         score += 15;
         continue;
       }
@@ -533,113 +965,147 @@ export function capturePageForms(): InjectedCaptureResult {
           `input[type="checkbox"][name="${CSS.escape(el.name)}"]`,
         );
         if (sameName.length > 1) {
-          // Check if already processed
-          if (fields.some((f) => f.label === labelInfo.label)) continue;
+          if (fields.some((f) => f.label === labelInfo)) continue;
           const checkedBoxes = Array.from(sameName).filter((c) => c.checked);
-          if (checkedBoxes.length === 0) continue; // Unchecked group -> omit
-
-          const checkedVals = checkedBoxes.map((c) => {
-            const l = getLabelInfo(c);
-            return l.label || c.value;
-          });
-
-          fields.push({
-            id: crypto.randomUUID(),
-            label: labelInfo.label,
-            value: checkedVals.join(', '),
-            fieldType: 'checkbox',
-            labelSource: labelInfo.source,
-            excluded: false,
-          });
+          if (checkedBoxes.length > 0) {
+            answered++;
+            const checkedVals = checkedBoxes.map((c) => {
+              const l = getLabelText(c);
+              return l || c.value;
+            });
+            fields.push({
+              id: crypto.randomUUID(),
+              label: labelInfo,
+              value: checkedVals.join(', '),
+              fieldType: 'checkbox',
+              labelSource: 'role-label',
+              excluded: false,
+            });
+          }
           score += 15;
           continue;
         }
       }
 
       const val = getFieldValue(el);
-      if (!val) continue; // Empty Field Policy: omit empty inputs
+      if (val) {
+        answered++;
+        const fType =
+          el instanceof HTMLTextAreaElement
+            ? 'textarea'
+            : el instanceof HTMLSelectElement
+              ? 'select'
+              : (el as HTMLInputElement).type || 'text';
 
-      const fType =
-        el instanceof HTMLTextAreaElement
-          ? 'textarea'
-          : el instanceof HTMLSelectElement
-            ? 'select'
-            : (el as HTMLInputElement).type || 'text';
-
-      fields.push({
-        id: crypto.randomUUID(),
-        label: labelInfo.label,
-        value: val,
-        fieldType: fType,
-        labelSource: labelInfo.source,
-        excluded: false,
-      });
+        fields.push({
+          id: crypto.randomUUID(),
+          label: labelInfo,
+          value: val,
+          fieldType: fType,
+          labelSource: 'label',
+          excluded: false,
+        });
+      }
 
       if (el instanceof HTMLTextAreaElement) {
         textareaCount++;
         score += 25;
+      } else if (
+        el instanceof HTMLInputElement &&
+        ['email', 'tel', 'url', 'number', 'date'].includes(el.type)
+      ) {
+        score += 15;
+      } else if (
+        el instanceof HTMLSelectElement ||
+        (el instanceof HTMLInputElement && el.type === 'checkbox')
+      ) {
+        score += 12;
       } else {
         score += 10;
       }
     }
 
-    if (fields.length >= 3) score += 20;
-    if (fields.length >= 6) score += 25;
+    if (totalMeaningful >= 2) score += 15;
+    if (totalMeaningful >= 4) score += 20;
+    if (totalMeaningful >= 8) score += 25;
     if (textareaCount >= 2) score += 30;
+    if (labelsSeen.size >= 3) score += 15;
 
-    if (container instanceof HTMLFormElement) {
-      const idAndClass = `${container.id} ${container.className}`.toLowerCase();
-      if (APPLICATION_PATTERNS.test(idAndClass)) score += 25;
-      const submitBtn = container.querySelector(
-        'button[type="submit"], input[type="submit"], button:not([type])',
-      );
-      if (submitBtn) {
-        const btnText = (
-          submitBtn.textContent ||
-          (submitBtn as HTMLInputElement).value ||
-          ''
-        ).trim();
-        if (SUBMIT_BUTTON_PATTERNS.test(btnText)) score += 25;
-      }
+    if (container.tagName.toLowerCase() === 'form') score += 15;
+    if (container.getAttribute('role') === 'form') score += 15;
+
+    const idAndClass = `${container.id} ${container.className}`.toLowerCase();
+    if (APPLICATION_PATTERNS.test(idAndClass)) score += 20;
+
+    const btns = Array.from(
+      container.querySelectorAll(
+        'button, input[type="submit"], input[type="button"], a.btn, div[role="button"]',
+      ),
+    );
+    const hasWorkflow = btns.some((b) => {
+      const txt = (b.textContent || (b as HTMLInputElement).value || '').trim();
+      return SUBMIT_BUTTON_PATTERNS.test(txt);
+    });
+    if (hasWorkflow) score += 25;
+
+    if (answered > 0) score += Math.min(answered * 3, 15);
+
+    if (totalMeaningful < 2 && textareaCount === 0) {
+      score -= 50;
+    } else if (
+      totalMeaningful <= 2 &&
+      textareaCount === 0 &&
+      !hasWorkflow &&
+      !APPLICATION_PATTERNS.test(idAndClass)
+    ) {
+      score -= 40;
     }
 
-    if (fields.length < 2 && textareaCount === 0) score -= 40;
-
-    if (score >= 30 && fields.length >= 1) {
-      candidateResults.push({
+    if (score >= 30 && totalMeaningful >= 1) {
+      candidates.push({
         fields,
         score,
         excludedCount,
+        totalDetected: totalMeaningful,
+        answeredCount: answered,
       });
     }
   }
 
-  if (candidateResults.length === 0) {
+  const hasIframes = document.querySelectorAll('iframe').length > 0;
+  if (candidates.length === 0) {
     return {
+      formDetected: false,
       fields: [],
       excludedCount: 0,
       totalDetected: 0,
       includedCount: 0,
+      answeredCount: 0,
+      inaccessibleFrameDetected: hasIframes,
     };
   }
 
-  candidateResults.sort((a, b) => b.score - a.score);
-  const winner = candidateResults[0];
+  candidates.sort((a, b) => b.score - a.score);
+  const winner = candidates[0];
   if (!winner) {
     return {
+      formDetected: false,
       fields: [],
       excludedCount: 0,
       totalDetected: 0,
       includedCount: 0,
+      answeredCount: 0,
+      inaccessibleFrameDetected: hasIframes,
     };
   }
 
-  const included = winner.fields.filter((f) => !f.excluded);
-
   return {
+    formDetected: true,
     fields: winner.fields,
     excludedCount: winner.excludedCount,
-    totalDetected: winner.fields.length,
-    includedCount: included.length,
+    totalDetected: winner.totalDetected,
+    includedCount: winner.answeredCount,
+    answeredCount: winner.answeredCount,
+    inaccessibleFrameDetected: false,
   };
 }

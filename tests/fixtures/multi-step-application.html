@@ -1,0 +1,85 @@
+<!-- 
+  Title: Multi-Step Application Page Fixture
+  Purpose: Test that only the currently active and visible step of a multi-step form
+           is detected and captured, while hidden inactive steps are excluded.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Fellowship Application - Multi-Step Portal</title>
+  </head>
+  <body>
+    <div class="application-shell">
+      <!-- Step Navigation / Wizard Progress -->
+      <nav class="step-nav" role="tablist">
+        <button role="tab" aria-selected="true" class="active">1. Personal Info</button>
+        <button role="tab" aria-selected="false">2. Academic Background</button>
+        <button role="tab" aria-selected="false">3. Research Statement</button>
+      </nav>
+
+      <div class="form-wrapper">
+        <!-- Step 1: Currently VISIBLE -->
+        <div id="step-1" class="step-panel" role="tabpanel">
+          <h3>Step 1: Contact Details</h3>
+
+          <div>
+            <label for="step1-name">Full Legal Name</label>
+            <input type="text" id="step1-name" name="legal_name" value="Dr. Elena Rostova" />
+          </div>
+
+          <div>
+            <label for="step1-email">Primary Email</label>
+            <input
+              type="email"
+              id="step1-email"
+              name="primary_email"
+              value="elena.rostova@lab.ac.uk"
+            />
+          </div>
+
+          <div>
+            <label for="step1-phone">Contact Phone</label>
+            <input type="tel" id="step1-phone" name="phone" value="+44 20 7946 0991" />
+          </div>
+
+          <div>
+            <label for="step1-bio">Short Biography</label>
+            <textarea id="step1-bio" name="short_bio">
+Postdoctoral fellow researching distributed systems.</textarea>
+          </div>
+
+          <div class="wizard-actions">
+            <button type="button">Save Progress</button>
+            <button type="button">Next: Academic Background</button>
+          </div>
+        </div>
+
+        <!-- Step 2: Currently HIDDEN -->
+        <div
+          id="step-2"
+          class="step-panel"
+          role="tabpanel"
+          style="display: none"
+          hidden
+          aria-hidden="true"
+        >
+          <h3>Step 2: Academic Background</h3>
+          <div>
+            <label for="step2-institution">Current Institution</label>
+            <input
+              type="text"
+              id="step2-institution"
+              name="institution"
+              value="Hidden University"
+            />
+          </div>
+          <div>
+            <label for="step2-degree">Highest Degree</label>
+            <input type="text" id="step2-degree" name="degree" value="PhD in Computer Science" />
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,40 @@
+<!-- 
+  Title: Shadow DOM Application Fixture
+  Purpose: Verify traversal of open Shadow DOM trees for Web Component form fields.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Web Component Application Portal</title>
+  </head>
+  <body>
+    <h1>Application Portal</h1>
+    <div id="host-element"></div>
+
+    <script>
+      const host = document.getElementById('host-element');
+      if (host) {
+        const shadow = host.attachShadow({ mode: 'open' });
+        shadow.innerHTML = `
+          <div class="shadow-form-container">
+            <h2>Component Grant Form</h2>
+            <div>
+              <label for="shadow-title">Project Name</label>
+              <input type="text" id="shadow-title" value="Quantum Resistant Messaging" />
+            </div>
+            <div>
+              <label for="shadow-desc">Description</label>
+              <textarea id="shadow-desc">Post-quantum key encapsulation implementation.</textarea>
+            </div>
+            <div>
+              <label for="shadow-budget">Budget</label>
+              <input type="number" id="shadow-budget" value="75000" />
+            </div>
+            <button type="button">Submit Component Form</button>
+          </div>
+        `;
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,68 @@
+<!-- 
+  Title: Form-Associated Controls Fixture
+  Purpose: Verify that inputs outside <form> that reference it via the [form] attribute
+           are correctly grouped with their owning form.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Grant Proposal Submission</title>
+  </head>
+  <body>
+    <div class="layout-grid">
+      <main class="content-column">
+        <form id="proposal-form" method="post" action="/submit-proposal">
+          <h2>Grant Proposal Form</h2>
+          <div>
+            <label for="proposalTitle">Proposal Title</label>
+            <input
+              type="text"
+              id="proposalTitle"
+              name="title"
+              value="Zero-Knowledge Identity Framework"
+            />
+          </div>
+
+          <div>
+            <label for="proposalAbstract">Abstract</label>
+            <textarea id="proposalAbstract" name="abstract">
+Privacy-preserving credentials protocol.</textarea>
+          </div>
+        </form>
+      </main>
+
+      <!-- Sidebar containing form-associated fields physically outside <form> -->
+      <aside class="sidebar-column">
+        <div class="sidebar-card">
+          <h3>Administrative Details</h3>
+          <div>
+            <label for="leadOrg">Lead Organization</label>
+            <input
+              type="text"
+              id="leadOrg"
+              form="proposal-form"
+              name="organization"
+              value="Identity Research Org"
+            />
+          </div>
+
+          <div>
+            <label for="budgetCap">Budget Cap (USD)</label>
+            <input
+              type="number"
+              id="budgetCap"
+              form="proposal-form"
+              name="budget_cap"
+              value="250000"
+            />
+          </div>
+
+          <div>
+            <button type="submit" form="proposal-form">Submit Full Application</button>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </body>
+</html>

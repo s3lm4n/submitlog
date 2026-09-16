@@ -1,10 +1,25 @@
 import type { CapturedField } from '../models/submission';
-import { findFormContainers, discoverFormFields } from './form-discoverer';
+import { findFormCandidates, discoverFormFields, type FormCandidate } from './form-discoverer';
 import { checkSensitiveField } from './sensitive-filter';
 import { extractLabel, isLabelMeaningful } from './label-extractor';
 import { extractValue } from './value-extractor';
 import { scoreFormCandidate, isUtilityForm, type ScoredFieldCandidate } from './form-scorer';
 import { generateId } from '../utils/id';
+
+export interface CandidateDiagnostic {
+  type: 'form' | 'role-form' | 'fieldset' | 'cluster' | 'shadow';
+  structuralScore: number;
+  meaningfulControlCount: number;
+  answeredControlCount: number;
+  isMeaningful: boolean;
+  rejectionReason?: string;
+  isChildFrame?: boolean;
+}
+
+export interface FormDiagnosticInfo {
+  candidateCount: number;
+  candidates: CandidateDiagnostic[];
+}
 
 export interface CaptureResult {
   fields: CapturedField[];
@@ -14,41 +29,57 @@ export interface CaptureResult {
   totalDetected: number;
   includedCount: number;
   excludedCount: number;
+  formDetected: boolean;
+  answeredCount: number;
+  inaccessibleFrameDetected?: boolean;
+  diagnostics?: FormDiagnosticInfo;
 }
 
 interface ProcessedCandidate {
-  container: Element;
-  fields: CapturedField[];
-  scoredFields: ScoredFieldCandidate[];
+  candidate: FormCandidate;
   score: number;
-  isMeaningful: boolean;
+  capturedAnswers: CapturedField[];
+  meaningfulFieldCount: number;
   excludedCount: number;
+  answeredCount: number;
 }
 
 export function captureFormData(doc: Document, url: string): CaptureResult {
-  const containers = findFormContainers(doc);
-  const candidates: ProcessedCandidate[] = [];
+  const candidates = findFormCandidates(doc);
+  const processedCandidates: ProcessedCandidate[] = [];
+  const diagnostics: CandidateDiagnostic[] = [];
 
-  for (const container of containers) {
-    if (isUtilityForm(container)) {
+  for (const candidate of candidates) {
+    if (isUtilityForm(candidate.container)) {
+      diagnostics.push({
+        type: candidate.type,
+        structuralScore: -999,
+        meaningfulControlCount: candidate.elements.length,
+        answeredControlCount: 0,
+        isMeaningful: false,
+        rejectionReason: 'Candidate rejected as search, navigation, or utility UI',
+      });
       continue;
     }
 
-    const discovered = discoverFormFields(container);
-    const validFields: CapturedField[] = [];
+    const discovered = discoverFormFields(candidate);
+    const capturedAnswers: CapturedField[] = [];
     const scoredFields: ScoredFieldCandidate[] = [];
+    let meaningfulFieldCount = 0;
     let excludedCount = 0;
+    let answeredCount = 0;
 
     for (const field of discovered) {
       const { element, fieldType, groupValues } = field;
       const typedElement = element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
 
-      // 1. Sensitive check
+      // 1. Sensitive check (passwords, OTP, payment cards, tokens)
       const sensitiveCheck = checkSensitiveField(typedElement);
       if (sensitiveCheck.isSensitive) {
         excludedCount++;
+        meaningfulFieldCount++;
         const labelResult = extractLabel(element, doc);
-        validFields.push({
+        capturedAnswers.push({
           id: generateId(),
           label: labelResult.label || 'Sensitive Field',
           value: '',
@@ -63,62 +94,74 @@ export function captureFormData(doc: Document, url: string): CaptureResult {
       // 2. Label extraction
       const labelResult = extractLabel(element, doc);
       if (!isLabelMeaningful(labelResult)) {
-        // Unknown Field Policy: exclude controls with no meaningful label/identifier
+        // Unknown Field Policy: exclude controls lacking meaningful label/identifier
         continue;
       }
 
-      // 3. Value extraction & Empty Field Policy
+      meaningfulFieldCount++;
+
+      // 3. Value extraction & Answer determination
       let value = '';
       if (fieldType === 'radio' && groupValues) {
         const selected = groupValues.find((v) => v.checked);
-        if (!selected) {
-          // Unselected radio group -> omit
-          continue;
+        if (selected) {
+          value = selected.value || selected.label;
         }
-        value = selected.value || selected.label;
       } else if (fieldType === 'checkbox' && groupValues && groupValues.length > 1) {
         const selected = groupValues.filter((v) => v.checked).map((v) => v.value || v.label);
-        if (selected.length === 0) {
-          // No checkboxes checked in group -> omit
-          continue;
+        if (selected.length > 0) {
+          value = selected.join(', ');
         }
-        value = selected.join(', ');
       } else {
         value = extractValue(element);
       }
 
-      // Empty Field Policy: omit empty optional fields
-      if (!value || value.trim() === '') {
-        continue;
+      const hasAnswer = Boolean(value && value.trim() !== '');
+      if (hasAnswer) {
+        answeredCount++;
+        capturedAnswers.push({
+          id: generateId(),
+          label: labelResult.label,
+          value: value.trim(),
+          fieldType,
+          labelSource: labelResult.source,
+          excluded: false,
+        });
       }
 
-      validFields.push({
-        id: generateId(),
-        label: labelResult.label,
-        value: value.trim(),
-        fieldType,
-        labelSource: labelResult.source,
-        excluded: false,
-      });
+      // Structural Form Quality operates on ALL safe meaningful fields (regardless of value!)
+      const isRequired =
+        element.hasAttribute('required') || element.getAttribute('aria-required') === 'true';
 
       scoredFields.push({
         fieldType,
-        hasValue: true,
+        hasValue: hasAnswer,
         isTextarea: fieldType === 'textarea',
         hasLabel: true,
+        label: labelResult.label,
+        isRequired,
       });
     }
 
-    const scoreResult = scoreFormCandidate(container, scoredFields);
+    const scoreResult = scoreFormCandidate(candidate.container, scoredFields);
 
-    if (scoreResult.isMeaningful && scoredFields.length > 0) {
-      candidates.push({
-        container,
-        fields: validFields,
-        scoredFields,
+    diagnostics.push({
+      type: candidate.type,
+      structuralScore: scoreResult.score,
+      meaningfulControlCount: meaningfulFieldCount,
+      answeredControlCount: answeredCount,
+      isMeaningful: scoreResult.isMeaningful,
+      rejectionReason: scoreResult.isMeaningful ? undefined : scoreResult.reasons.join('; '),
+    });
+
+    if (scoreResult.isMeaningful && meaningfulFieldCount > 0) {
+      processedCandidates.push({
+        candidate,
         score: scoreResult.score,
-        isMeaningful: true,
+        capturedAnswers,
+        meaningfulFieldCount,
         excludedCount,
+        answeredCount,
       });
     }
   }
@@ -133,7 +176,8 @@ export function captureFormData(doc: Document, url: string): CaptureResult {
   }
 
   // If no candidates qualify
-  if (candidates.length === 0) {
+  if (processedCandidates.length === 0) {
+    const hasIframes = doc.querySelectorAll('iframe').length > 0;
     return {
       fields: [],
       pageTitle: title,
@@ -142,12 +186,19 @@ export function captureFormData(doc: Document, url: string): CaptureResult {
       totalDetected: 0,
       includedCount: 0,
       excludedCount: 0,
+      formDetected: false,
+      answeredCount: 0,
+      inaccessibleFrameDetected: hasIframes,
+      diagnostics: {
+        candidateCount: candidates.length,
+        candidates: diagnostics,
+      },
     };
   }
 
   // Pick the highest scoring candidate (do NOT merge unrelated forms)
-  candidates.sort((a, b) => b.score - a.score);
-  const best = candidates[0];
+  processedCandidates.sort((a, b) => b.score - a.score);
+  const best = processedCandidates[0];
   if (!best) {
     return {
       fields: [],
@@ -157,18 +208,28 @@ export function captureFormData(doc: Document, url: string): CaptureResult {
       totalDetected: 0,
       includedCount: 0,
       excludedCount: 0,
+      formDetected: false,
+      answeredCount: 0,
+      diagnostics: {
+        candidateCount: candidates.length,
+        candidates: diagnostics,
+      },
     };
   }
 
-  const included = best.fields.filter((f) => !f.excluded);
-
   return {
-    fields: best.fields,
+    fields: best.capturedAnswers,
     pageTitle: title,
     pageUrl: url,
     hostname,
-    totalDetected: best.fields.length,
-    includedCount: included.length,
+    totalDetected: best.meaningfulFieldCount,
+    includedCount: best.answeredCount,
     excludedCount: best.excludedCount,
+    formDetected: true,
+    answeredCount: best.answeredCount,
+    diagnostics: {
+      candidateCount: candidates.length,
+      candidates: diagnostics,
+    },
   };
 }

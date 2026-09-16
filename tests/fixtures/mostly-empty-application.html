@@ -1,0 +1,100 @@
+<!-- 
+  Title: Mostly-Empty Application Form Fixture
+  Purpose: Verify that real application forms are detected structurally even when
+           almost all fields are blank, and only populated answers are captured.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>SmartGrant Portal - Innovation Fund</title>
+  </head>
+  <body>
+    <header>
+      <h1>SmartGrant Portal</h1>
+    </header>
+
+    <main>
+      <form id="grant-application-form" method="post" action="/apply">
+        <h2>Innovation Fund Application</h2>
+
+        <!-- Field 1: Blank -->
+        <div>
+          <label for="applicantName">Lead Applicant Name</label>
+          <input type="text" id="applicantName" name="applicant_name" value="" />
+        </div>
+
+        <!-- Field 2: Blank -->
+        <div>
+          <label for="organizationName">Organization / Institution</label>
+          <input type="text" id="organizationName" name="org_name" value="" />
+        </div>
+
+        <!-- Field 3: Blank -->
+        <div>
+          <label for="applicantEmail">Contact Email</label>
+          <input type="email" id="applicantEmail" name="applicant_email" value="" />
+        </div>
+
+        <!-- Field 4: POPULATED ANSWER -->
+        <div>
+          <label for="projectTitle">Project Title</label>
+          <input
+            type="text"
+            id="projectTitle"
+            name="project_title"
+            value="Decentralized Archival Protocol"
+          />
+        </div>
+
+        <!-- Field 5: Blank Textarea -->
+        <div>
+          <label for="projectOneLiner">Project One-Liner</label>
+          <textarea id="projectOneLiner" name="project_one_liner"></textarea>
+        </div>
+
+        <!-- Field 6: Blank Textarea -->
+        <div>
+          <label for="detailedProposal">Detailed Proposal</label>
+          <textarea id="detailedProposal" name="detailed_proposal"></textarea>
+        </div>
+
+        <!-- Field 7: Blank Number -->
+        <div>
+          <label for="requestedFunding">Requested Funding (USD)</label>
+          <input type="number" id="requestedFunding" name="funding_usd" value="" />
+        </div>
+
+        <!-- Field 8: Blank Date -->
+        <div>
+          <label for="targetStartDate">Proposed Start Date</label>
+          <input type="date" id="targetStartDate" name="start_date" value="" />
+        </div>
+
+        <!-- Field 9: Blank Select -->
+        <div>
+          <label for="focusCountry">Primary Focus Country</label>
+          <select id="focusCountry" name="country">
+            <option value="">-- Please select --</option>
+            <option value="US">United States</option>
+            <option value="CA">Canada</option>
+          </select>
+        </div>
+
+        <!-- Field 10: Unchecked Checkbox -->
+        <div>
+          <label>
+            <input type="checkbox" id="certifyTerms" name="certify_terms" />
+            I certify all statements are true
+          </label>
+        </div>
+
+        <!-- Workflow / submission controls -->
+        <div class="workflow-actions">
+          <button type="button" name="action_draft">Save Draft</button>
+          <button type="submit" name="action_submit">Submit Application</button>
+        </div>
+      </form>
+    </main>
+  </body>
+</html>

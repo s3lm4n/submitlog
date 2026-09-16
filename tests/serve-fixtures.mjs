@@ -25,6 +25,12 @@ export const ALLOWED_FIXTURES = new Set([
   'app-with-search.html',
   'empty-and-unlabeled.html',
   'two-unrelated-forms.html',
+  'mostly-empty-application.html',
+  'div-based-spa-application.html',
+  'form-associated-controls.html',
+  'multi-step-application.html',
+  'shadow-dom-application.html',
+  'iframe-application.html',
 ]);
 
 /**

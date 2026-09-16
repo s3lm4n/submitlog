@@ -31,6 +31,36 @@ export function extractLabel(element: HTMLElement, document: Document): LabelRes
     }
   }
 
+  // For radio buttons, check role="radiogroup" or role="group" container first (for question title)
+  if (element instanceof HTMLInputElement && element.type === 'radio') {
+    const groupContainer = element.closest('[role="radiogroup"], [role="group"]');
+    if (groupContainer) {
+      const groupAriaLabel = groupContainer.getAttribute('aria-label');
+      if (groupAriaLabel?.trim()) {
+        return { label: normalizeAndTruncate(groupAriaLabel), source: 'aria-label' };
+      }
+      const groupLabelledby = groupContainer.getAttribute('aria-labelledby');
+      if (groupLabelledby) {
+        const parts = groupLabelledby
+          .split(/\s+/)
+          .map((refId) => document.getElementById(refId)?.textContent?.trim())
+          .filter(Boolean);
+        if (parts.length > 0) {
+          return { label: normalizeAndTruncate(parts.join(' ')), source: 'aria-labelledby' };
+        }
+      }
+      const groupHeading = groupContainer.querySelector(
+        'h1, h2, h3, h4, h5, h6, [role="heading"], .group-label',
+      );
+      if (groupHeading && groupHeading.textContent?.trim() && !groupHeading.contains(element)) {
+        return {
+          label: normalizeAndTruncate(groupHeading.textContent.trim()),
+          source: 'nearby-text',
+        };
+      }
+    }
+  }
+
   const wrappingLabel = element.closest('label');
   if (wrappingLabel && wrappingLabel.textContent?.trim()) {
     const clone = wrappingLabel.cloneNode(true) as HTMLElement;
@@ -66,6 +96,41 @@ export function extractLabel(element: HTMLElement, document: Document): LabelRes
     const legend = fieldset.querySelector('legend');
     if (legend?.textContent?.trim()) {
       return { label: normalizeAndTruncate(legend.textContent), source: 'nearby-text' };
+    }
+  }
+
+  // Check role="group" or role="radiogroup" aria-label
+  const groupContainer = element.closest('[role="radiogroup"], [role="group"]');
+  if (groupContainer) {
+    const groupAriaLabel = groupContainer.getAttribute('aria-label');
+    if (groupAriaLabel?.trim()) {
+      return { label: normalizeAndTruncate(groupAriaLabel), source: 'aria-label' };
+    }
+    const groupLabelledby = groupContainer.getAttribute('aria-labelledby');
+    if (groupLabelledby) {
+      const parts = groupLabelledby
+        .split(/\s+/)
+        .map((refId) => document.getElementById(refId)?.textContent?.trim())
+        .filter(Boolean);
+      if (parts.length > 0) {
+        return { label: normalizeAndTruncate(parts.join(' ')), source: 'aria-labelledby' };
+      }
+    }
+  }
+
+  // Check question heading in surrounding question card or row
+  const questionCard = element.closest(
+    '[role="listitem"], .form-group, .question, .field, .form-row, .field-wrapper',
+  );
+  if (questionCard) {
+    const heading = questionCard.querySelector<HTMLElement>(
+      'h1, h2, h3, h4, h5, h6, [role="heading"], .question-title, .field-label',
+    );
+    if (heading && heading.textContent?.trim()) {
+      const headingText = heading.textContent.trim();
+      if (headingText.length < 250 && !heading.contains(element)) {
+        return { label: normalizeAndTruncate(headingText), source: 'nearby-text' };
+      }
     }
   }
 

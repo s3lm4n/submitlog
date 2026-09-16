@@ -5,8 +5,9 @@ import { SCHEMA_VERSION } from '../../src/models/submission';
 import { generateId } from '../../src/utils/id';
 import { createSubmissionRepository } from '../../src/storage/submission-repository';
 import {
-  countFormFields,
+  scanPageForms,
   capturePageForms,
+  type InjectedScanResult,
   type InjectedCaptureResult,
 } from '../../src/capture/injected-capture';
 import {
@@ -24,7 +25,11 @@ export function Popup() {
   const [hostname, setHostname] = useState('');
   const [pageTitle, setPageTitle] = useState('');
   const [pageUrl, setPageUrl] = useState('');
-  const [fieldCount, setFieldCount] = useState(0);
+  const [formDetected, setFormDetected] = useState(false);
+  const [totalFields, setTotalFields] = useState(0);
+  const [answeredCount, setAnsweredCount] = useState(0);
+  const [targetFrameId, setTargetFrameId] = useState(0);
+  const [inaccessibleFrame, setInaccessibleFrame] = useState(false);
   const [capturedFields, setCapturedFields] = useState<CapturedField[]>([]);
   const [selectedFields, setSelectedFields] = useState<Set<string>>(new Set());
   const [excludedCount, setExcludedCount] = useState(0);
@@ -48,7 +53,9 @@ export function Popup() {
         setPageTitle('');
         setPageUrl('');
         setHostname('');
-        setFieldCount(0);
+        setFormDetected(false);
+        setTotalFields(0);
+        setAnsweredCount(0);
         setState('private-blocked');
         return;
       }
@@ -65,13 +72,44 @@ export function Popup() {
       setPageTitle(tab.title || url.hostname);
       setPageUrl(tab.url);
 
+      // Scan all accessible frames within the tab (via activeTab/scripting)
       const results = await browser.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: countFormFields,
+        target: { tabId: tab.id, allFrames: true },
+        func: scanPageForms,
       });
 
-      const count = (results?.[0]?.result as number) ?? 0;
-      setFieldCount(count);
+      let bestFrameId = 0;
+      let bestScan: InjectedScanResult | null = null;
+      let anyInaccessible = false;
+
+      if (results && results.length > 0) {
+        for (const r of results) {
+          const res = r.result as InjectedScanResult | undefined;
+          if (!res) continue;
+          if (res.inaccessibleFrameDetected) anyInaccessible = true;
+          if (res.formDetected) {
+            if (!bestScan || (res.score || 0) > (bestScan.score || 0)) {
+              bestScan = res;
+              bestFrameId = r.frameId ?? 0;
+            }
+          }
+        }
+      }
+
+      setTargetFrameId(bestFrameId);
+
+      if (bestScan && bestScan.formDetected) {
+        setFormDetected(true);
+        setTotalFields(bestScan.totalFields);
+        setAnsweredCount(bestScan.answeredCount);
+        setInaccessibleFrame(false);
+      } else {
+        setFormDetected(false);
+        setTotalFields(0);
+        setAnsweredCount(0);
+        setInaccessibleFrame(anyInaccessible);
+      }
+
       setState('idle');
     } catch {
       setState('restricted');
@@ -100,7 +138,7 @@ export function Popup() {
       }
 
       const results = await browser.scripting.executeScript({
-        target: { tabId: tab.id },
+        target: { tabId: tab.id, frameIds: [targetFrameId] },
         func: capturePageForms,
       });
 
@@ -126,7 +164,6 @@ export function Popup() {
   }
 
   async function handleSave() {
-    // Guard against persisting private/incognito data
     try {
       const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
       if (checkPrivateBrowsing(tab).isPrivate) {
@@ -326,7 +363,10 @@ export function Popup() {
     );
   }
 
-  // default idle state
+  // Default idle state distinguishing:
+  // 1. No form detected
+  // 2. Application detected, 0 answers entered yet
+  // 3. Application detected, answers ready
   return (
     <div className="popup-container idle-state">
       <div className="header">
@@ -336,34 +376,59 @@ export function Popup() {
         </button>
       </div>
 
-      {fieldCount > 0 ? (
-        <>
-          <div className="status-card">
-            <div className="site-info">{hostname}</div>
-            <div className="field-stats">
-              <span className="count">{fieldCount}</span>
-              <span className="label">
-                {fieldCount === 1 ? 'Field ready to capture' : 'Fields ready to capture'}
-              </span>
-            </div>
-          </div>
-
-          <div className="actions main-actions">
-            <button className="btn btn-primary capture-btn" onClick={handleCapture}>
-              Capture submission
-            </button>
-          </div>
-        </>
-      ) : (
+      {!formDetected ? (
         <>
           <div className="status-card message-card">
             <div className="site-info">{hostname}</div>
-            <p className="guard-message">No meaningful submission form detected on this page.</p>
+            <p className="guard-message">
+              {inaccessibleFrame
+                ? 'SubmitLog found an embedded form it cannot access with the current permission model.'
+                : 'No meaningful submission form detected on this page.'}
+            </p>
           </div>
 
           <div className="actions main-actions">
             <button className="btn btn-primary capture-btn" disabled={true}>
               Capture submission
+            </button>
+          </div>
+        </>
+      ) : answeredCount === 0 ? (
+        <>
+          <div className="status-card">
+            <div className="site-info">{hostname}</div>
+            <div className="field-stats">
+              <span className="count">{totalFields}</span>
+              <span className="label">
+                {totalFields === 1 ? 'Field detected' : 'Fields detected'}
+              </span>
+            </div>
+            <p className="form-subtext">Application form detected. No answers entered yet.</p>
+          </div>
+
+          <div className="actions main-actions">
+            <button className="btn btn-primary capture-btn" disabled={true}>
+              Capture answers (0)
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="status-card">
+            <div className="site-info">{hostname}</div>
+            <div className="field-stats">
+              <span className="count">{answeredCount}</span>
+              <span className="label">
+                {answeredCount === 1 ? 'Answer ready' : 'Answers ready'} ({totalFields} fields
+                detected)
+              </span>
+            </div>
+            <p className="form-subtext">Application form detected</p>
+          </div>
+
+          <div className="actions main-actions">
+            <button className="btn btn-primary capture-btn" onClick={handleCapture}>
+              Capture {answeredCount} {answeredCount === 1 ? 'answer' : 'answers'}
             </button>
           </div>
         </>

@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import { captureFormData } from '../src/capture/capture-engine';
+import { scanPageForms, capturePageForms } from '../src/capture/injected-capture';
+import { checkFieldEligibility } from '../src/assistant/field-eligibility';
 
 function loadFixture(filename: string): Document {
   const html = readFileSync(resolve(__dirname, 'fixtures', filename), 'utf-8');
@@ -202,6 +204,108 @@ describe('Real-World Form Detection & Answer Capture Regressions', () => {
       // Never leak user-entered data into diagnostics
       expect(jsonString).not.toContain('Decentralized Archival Protocol');
       expect(jsonString).not.toContain('applicant_email');
+    });
+  });
+
+  describe('Scenario I: Google Forms / Modern Div-Heavy Application (No native <form>)', () => {
+    it('detects div-based question cards, consolidates role="radio" radiogroup, cleans required markers, and rejects navigation/page indicators', () => {
+      const doc = loadFixture('google-forms-style-application.html');
+      const result = captureFormData(doc, 'https://forms.example.org/viewform');
+
+      // 1. Meaningful form detected structurally
+      expect(result.formDetected).toBe(true);
+      expect(result.totalDetected).toBe(2);
+      expect(result.answeredCount).toBe(2);
+      expect(result.includedCount).toBe(2);
+
+      // 2. Extracted labels must be cleaned of asterisk and "Required question"
+      const labels = result.fields.map((f) => f.label);
+      expect(labels).toContain('Email');
+      expect(labels).toContain('Which program are you applying to?');
+      expect(labels).not.toContain('Email *');
+      expect(labels).not.toContain('Which program are you applying to? *');
+
+      // 3. Extracted answers
+      const emailField = result.fields.find((f) => f.label === 'Email');
+      expect(emailField?.value).toBe('alice@innovate.org');
+      expect(emailField?.fieldType).toBe('email');
+
+      const programField = result.fields.find(
+        (f) => f.label === 'Which program are you applying to?',
+      );
+      expect(programField?.value).toBe('Scale Accelerator');
+      expect(programField?.fieldType).toBe('radio');
+
+      // 4. Navigation buttons ("Next") and progress indicator ("Page 1 / 3") must NOT be captured as fields
+      for (const field of result.fields) {
+        expect(field.label).not.toMatch(/next/i);
+        expect(field.label).not.toMatch(/page\s+1/i);
+        expect(field.value).not.toMatch(/next/i);
+        expect(field.value).not.toMatch(/page\s+1/i);
+      }
+
+      // 5. Field assistant attaches to eligible controls
+      const emailInput = doc.querySelector<HTMLInputElement>('input[type="email"]')!;
+      expect(emailInput).not.toBeNull();
+      const eligibility = checkFieldEligibility(emailInput);
+      expect(eligibility.eligible).toBe(true);
+      expect(eligibility.label).toBe('Email');
+      expect(eligibility.currentValue).toBe('alice@innovate.org');
+    });
+
+    it('detects a completely blank Google Forms style application without rejection', () => {
+      const doc = loadFixture('google-forms-style-application.html');
+
+      // Clear the text input
+      const emailInput = doc.querySelector<HTMLInputElement>('input[type="email"]')!;
+      emailInput.value = '';
+
+      // Uncheck all radios
+      const radios = doc.querySelectorAll<HTMLElement>('[role="radio"]');
+      radios.forEach((r) => r.setAttribute('aria-checked', 'false'));
+
+      const result = captureFormData(doc, 'https://forms.example.org/viewform');
+
+      // Form must still be detected as a real form
+      expect(result.formDetected).toBe(true);
+      expect(result.totalDetected).toBe(2);
+      expect(result.answeredCount).toBe(0);
+      expect(result.includedCount).toBe(0);
+      expect(result.fields).toHaveLength(0);
+    });
+
+    it('detects and captures correctly via injected scanPageForms and capturePageForms', () => {
+      loadFixture('google-forms-style-application.html');
+
+      const scan = scanPageForms();
+      expect(scan.formDetected).toBe(true);
+      expect(scan.totalFields).toBe(2);
+      expect(scan.answeredCount).toBe(2);
+      expect(scan.score).toBeGreaterThanOrEqual(30);
+
+      const capture = capturePageForms();
+      expect(capture.formDetected).toBe(true);
+      expect(capture.totalDetected).toBe(2);
+      expect(capture.answeredCount).toBe(2);
+      expect(capture.fields).toHaveLength(2);
+
+      const radioField = capture.fields.find((f) => f.fieldType === 'radio');
+      expect(radioField?.label).toBe('Which program are you applying to?');
+      expect(radioField?.value).toBe('Scale Accelerator');
+    });
+
+    it('confirms Google search and utility UI remains strictly rejected by both engine and injected scripts', () => {
+      const doc = loadFixture('search-utility-page.html');
+      const result = captureFormData(doc, 'https://search.example.com/');
+
+      expect(result.formDetected).toBe(false);
+      expect(result.totalDetected).toBe(0);
+
+      const scan = scanPageForms();
+      expect(scan.formDetected).toBe(false);
+
+      const capture = capturePageForms();
+      expect(capture.formDetected).toBe(false);
     });
   });
 });

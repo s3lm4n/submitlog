@@ -6,8 +6,13 @@ export interface LabelResult {
 }
 
 function normalizeAndTruncate(text: string): string {
-  const normalized = text.replace(/\s+/g, ' ').trim();
-  return normalized.length > 500 ? normalized.substring(0, 497) + '...' : normalized;
+  let cleaned = text
+    .replace(/\s*Required question\s*/gi, '')
+    .replace(/[\s*]+$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) cleaned = text.replace(/\s+/g, ' ').trim();
+  return cleaned.length > 500 ? cleaned.substring(0, 497) + '...' : cleaned;
 }
 
 export function isLabelMeaningful(result: LabelResult): boolean {
@@ -31,8 +36,11 @@ export function extractLabel(element: HTMLElement, document: Document): LabelRes
     }
   }
 
-  // For radio buttons, check role="radiogroup" or role="group" container first (for question title)
-  if (element instanceof HTMLInputElement && element.type === 'radio') {
+  // For radio buttons (native or ARIA role="radio"), check role="radiogroup" or role="group" container first
+  const isRadio =
+    (element instanceof HTMLInputElement && element.type === 'radio') ||
+    element.getAttribute('role')?.toLowerCase() === 'radio';
+  if (isRadio) {
     const groupContainer = element.closest('[role="radiogroup"], [role="group"]');
     if (groupContainer) {
       const groupAriaLabel = groupContainer.getAttribute('aria-label');
@@ -120,7 +128,7 @@ export function extractLabel(element: HTMLElement, document: Document): LabelRes
 
   // Check question heading in surrounding question card or row
   const questionCard = element.closest(
-    '[role="listitem"], .form-group, .question, .field, .form-row, .field-wrapper',
+    '[role="listitem"], .form-group, .question, .question-card, .field, .form-row, .field-wrapper',
   );
   if (questionCard) {
     const heading = questionCard.querySelector<HTMLElement>(

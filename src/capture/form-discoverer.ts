@@ -41,6 +41,44 @@ export function isControlVisible(el: HTMLElement): boolean {
 }
 
 /**
+ * Determines whether a form control or role-based control is candidate form element.
+ */
+export function isFormControlElement(node: Node): HTMLElement | null {
+  if (!(node instanceof HTMLElement)) return null;
+  const tag = node.tagName.toLowerCase();
+  if (tag === 'input' || tag === 'textarea' || tag === 'select') {
+    const type = tag === 'input' ? (node as HTMLInputElement).type.toLowerCase() : '';
+    if (
+      type !== 'hidden' &&
+      type !== 'submit' &&
+      type !== 'button' &&
+      type !== 'image' &&
+      type !== 'reset'
+    ) {
+      return node;
+    }
+    return null;
+  }
+
+  const role = node.getAttribute('role')?.toLowerCase();
+  if (
+    role === 'radio' ||
+    role === 'checkbox' ||
+    role === 'textbox' ||
+    role === 'combobox' ||
+    role === 'listbox'
+  ) {
+    return node;
+  }
+
+  if (node.isContentEditable && !node.parentElement?.isContentEditable) {
+    return node;
+  }
+
+  return null;
+}
+
+/**
  * Traverses a DOM root and open Shadow DOM trees to discover all candidate form controls.
  */
 export function collectControlsWithShadowDOM(root: ParentNode): HTMLElement[] {
@@ -48,19 +86,19 @@ export function collectControlsWithShadowDOM(root: ParentNode): HTMLElement[] {
 
   function walk(node: Node) {
     if (node instanceof HTMLElement) {
-      const tag = node.tagName.toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || tag === 'select') {
-        const type = tag === 'input' ? (node as HTMLInputElement).type.toLowerCase() : '';
+      const ctrl = isFormControlElement(node);
+      if (ctrl && isControlVisible(ctrl)) {
+        controls.push(ctrl);
+        const role = ctrl.getAttribute('role')?.toLowerCase();
         if (
-          type !== 'hidden' &&
-          type !== 'submit' &&
-          type !== 'button' &&
-          type !== 'image' &&
-          type !== 'reset'
+          ctrl instanceof HTMLInputElement ||
+          ctrl instanceof HTMLSelectElement ||
+          ctrl instanceof HTMLTextAreaElement ||
+          role === 'radio' ||
+          role === 'checkbox'
         ) {
-          if (isControlVisible(node)) {
-            controls.push(node);
-          }
+          if (node.shadowRoot) walk(node.shadowRoot);
+          return;
         }
       }
       // Recursively traverse open shadow roots
@@ -84,6 +122,8 @@ export function collectControlsWithShadowDOM(root: ParentNode): HTMLElement[] {
 
 const CONTAINER_APP_PATTERNS =
   /app|apply|grant|register|signup|contact|proposal|inquiry|feedback|survey|checkout|order|portal|form|step|tab-pane|content/i;
+const SUBMIT_BUTTON_PATTERNS =
+  /submit|apply|send|save.?draft|save|register|complete|finish|continue|next|review|proceed|confirm/i;
 
 /**
  * Discovers form candidates across real-world structures:
@@ -141,24 +181,71 @@ export function findFormCandidates(doc: Document): FormCandidate[] {
     }
   }
 
-  // 3. Semantic application containers (e.g. role="tabpanel", .application-form, etc.)
+  // 3. Semantic application containers & Question card lists (e.g. role="tabpanel", role="list", .application-form, etc.)
   const unassignedAfterRoles = allControls.filter((c) => !assigned.has(c));
   if (unassignedAfterRoles.length > 0) {
     const potentialContainers = Array.from(
       doc.querySelectorAll(
-        '[role="tabpanel"], [role="region"], fieldset, section, article, div, main',
+        '[role="tabpanel"], [role="region"], [role="list"], fieldset, section, article, div, main',
       ),
     ).filter((el) => {
       if (el === doc.body || el === doc.documentElement) return false;
-      const idAndClass = `${el.id} ${el.className}`;
-      const role = el.getAttribute('role');
+      const idAndClass = `${el.id} ${el.className}`.toLowerCase();
+      const role = el.getAttribute('role')?.toLowerCase();
+
+      // Check if container contains 2+ question cards
+      const questionCardCount = el.querySelectorAll(
+        '[role="listitem"], .question-card, .question, .form-group, .field-wrapper',
+      ).length;
+
+      // Check for workflow buttons inside this container
+      const buttons = Array.from(
+        el.querySelectorAll(
+          'button, input[type="submit"], input[type="button"], a.btn, div[role="button"]',
+        ),
+      );
+      const hasWorkflowBtn = buttons.some((b) =>
+        SUBMIT_BUTTON_PATTERNS.test((b.textContent || (b as HTMLInputElement).value || '').trim()),
+      );
+
+      const hasStepIndicator =
+        /page\s+\d+\s*[-of/]+\s*\d+/i.test(el.textContent || '') ||
+        Boolean(el.querySelector('.step, .form-step, .tab-pane, [role="tabpanel"]'));
+
+      const containsControls =
+        el.querySelectorAll(
+          'input, textarea, select, [role="radio"], [role="checkbox"], [role="textbox"]',
+        ).length >= 2;
+
       return (
         role === 'tabpanel' ||
         role === 'region' ||
+        (role === 'list' && containsControls) ||
         el.tagName.toLowerCase() === 'fieldset' ||
         el.tagName.toLowerCase() === 'section' ||
-        CONTAINER_APP_PATTERNS.test(idAndClass)
+        CONTAINER_APP_PATTERNS.test(idAndClass) ||
+        (questionCardCount >= 2 && containsControls) ||
+        (hasWorkflowBtn && containsControls) ||
+        (hasStepIndicator && containsControls)
       );
+    });
+
+    // Prioritize containers that have workflow buttons and more controls
+    potentialContainers.sort((a, b) => {
+      const aHasBtn = a.querySelector(
+        'button, [role="button"], input[type="submit"], input[type="button"]',
+      )
+        ? 1
+        : 0;
+      const bHasBtn = b.querySelector(
+        'button, [role="button"], input[type="submit"], input[type="button"]',
+      )
+        ? 1
+        : 0;
+      if (aHasBtn !== bHasBtn) return bHasBtn - aHasBtn;
+      const aCtrlCount = unassignedAfterRoles.filter((c) => a.contains(c)).length;
+      const bCtrlCount = unassignedAfterRoles.filter((c) => b.contains(c)).length;
+      return bCtrlCount - aCtrlCount;
     });
 
     for (const container of potentialContainers) {
@@ -194,14 +281,24 @@ export function findFormCandidates(doc: Document): FormCandidate[] {
         parent !== doc.documentElement &&
         parent.tagName.toLowerCase() !== 'main' &&
         parent.parentElement &&
-        parent.parentElement !== doc.body &&
-        parent.querySelectorAll('input, textarea, select').length <= 20
+        parent.parentElement !== doc.body
       ) {
+        const isSingleCard =
+          parent.getAttribute('role') === 'listitem' ||
+          parent.classList.contains('question') ||
+          parent.classList.contains('question-card') ||
+          parent.classList.contains('form-group') ||
+          parent.classList.contains('field-wrapper') ||
+          parent.querySelectorAll(
+            'input, textarea, select, [role="radio"], [role="checkbox"], [role="textbox"]',
+          ).length <= 1;
+
         if (
-          parent.tagName.toLowerCase() === 'div' ||
-          parent.tagName.toLowerCase() === 'section' ||
-          parent.tagName.toLowerCase() === 'article' ||
-          parent.tagName.toLowerCase() === 'fieldset'
+          !isSingleCard &&
+          (parent.tagName.toLowerCase() === 'div' ||
+            parent.tagName.toLowerCase() === 'section' ||
+            parent.tagName.toLowerCase() === 'article' ||
+            parent.tagName.toLowerCase() === 'fieldset')
         ) {
           break;
         }
@@ -246,21 +343,52 @@ export function discoverFormFields(candidate: FormCandidate | Element): Discover
   }
 
   const discovered: DiscoveredField[] = [];
-  const radioGroups: Record<string, HTMLInputElement[]> = {};
-  const checkboxGroups: Record<string, HTMLInputElement[]> = {};
+  const radioGroups: Record<string, HTMLElement[]> = {};
+  const checkboxGroups: Record<string, HTMLElement[]> = {};
 
   for (const el of elements) {
-    if (el instanceof HTMLInputElement) {
-      const type = el.type.toLowerCase();
-      const name = el.name;
-      if (type === 'radio' && name) {
-        if (!radioGroups[name]) radioGroups[name] = [];
-        radioGroups[name].push(el);
-        continue;
+    const role = el.getAttribute('role')?.toLowerCase();
+    const isRadio =
+      (el instanceof HTMLInputElement && el.type.toLowerCase() === 'radio') || role === 'radio';
+    const isCheckbox =
+      (el instanceof HTMLInputElement && el.type.toLowerCase() === 'checkbox') ||
+      role === 'checkbox';
+
+    if (isRadio) {
+      let groupKey = el.getAttribute('name') || '';
+      if (!groupKey) {
+        const groupContainer = el.closest('[role="radiogroup"], [role="group"]');
+        if (groupContainer) {
+          groupKey =
+            groupContainer.id ||
+            groupContainer.getAttribute('aria-label') ||
+            groupContainer.getAttribute('aria-labelledby') ||
+            'radiogroup';
+        } else {
+          const card = el.closest(
+            '[role="listitem"], .question-card, .question, .form-group, .field',
+          );
+          groupKey = card?.id || 'radiogroup';
+        }
       }
-      if (type === 'checkbox' && name) {
-        if (!checkboxGroups[name]) checkboxGroups[name] = [];
-        checkboxGroups[name].push(el);
+      let groupList = radioGroups[groupKey];
+      if (!groupList) {
+        groupList = [];
+        radioGroups[groupKey] = groupList;
+      }
+      groupList.push(el);
+      continue;
+    }
+
+    if (isCheckbox) {
+      const name = el.getAttribute('name');
+      if (name) {
+        let cbList = checkboxGroups[name];
+        if (!cbList) {
+          cbList = [];
+          checkboxGroups[name] = cbList;
+        }
+        cbList.push(el);
         continue;
       }
     }
@@ -278,11 +406,24 @@ export function discoverFormFields(candidate: FormCandidate | Element): Discover
         element: first,
         fieldType: 'radio',
         groupName: name,
-        groupValues: radios.map((r) => ({
-          label: r.value || 'Radio',
-          value: r.value,
-          checked: r.checked,
-        })),
+        groupValues: radios.map((r) => {
+          const isChecked =
+            r instanceof HTMLInputElement
+              ? r.checked
+              : r.getAttribute('aria-checked') === 'true' ||
+                r.classList.contains('checked') ||
+                r.classList.contains('is-checked');
+          const val =
+            r.getAttribute('data-value') ||
+            r.getAttribute('aria-label') ||
+            (r instanceof HTMLInputElement ? r.value : r.textContent?.trim()) ||
+            'Radio';
+          return {
+            label: val,
+            value: val,
+            checked: isChecked,
+          };
+        }),
       });
     }
   }
@@ -301,9 +442,10 @@ export function discoverFormFields(candidate: FormCandidate | Element): Discover
           fieldType: 'checkbox',
           groupName: name,
           groupValues: checkboxes.map((c) => ({
-            label: c.value || 'Checkbox',
-            value: c.value,
-            checked: c.checked,
+            label: (c instanceof HTMLInputElement ? c.value : c.textContent?.trim()) || 'Checkbox',
+            value: (c instanceof HTMLInputElement ? c.value : c.textContent?.trim()) || 'Checkbox',
+            checked:
+              c instanceof HTMLInputElement ? c.checked : c.getAttribute('aria-checked') === 'true',
           })),
         });
       }

@@ -2,48 +2,66 @@
 
 > **Never forget what you submitted.**
 
-SubmitLog is a cross-browser, local-first, privacy-first archive for web form submissions.
+SubmitLog is a cross-browser, local-first, privacy-first archive for web form submissions and applications.
 
-You fill out a job application, grant form, accelerator application, or scholarship form. Before submitting, you click the SubmitLog extension to capture the questions and your answers. SubmitLog stores a structured local snapshot that you can browse, search, and export later.
+You fill out a job application, grant proposal, accelerator questionnaire, or scholarship form. SubmitLog captures your questions and answers into a structured local archive that you can search, reuse, and export anytime.
 
-No account. No backend. No data leaves your device.
+No accounts. No cloud. No telemetry. Your data never leaves your device.
+
+---
+
+## Key Features
+
+- **One-Click Form Capture:** Instant scan and capture from standard forms, modern SPAs (Tally, Google Forms, SmartSimple), and multi-step applications.
+- **Silent, Automatic Autosave:** Whenever a meaningful application or submission form is detected on a web page, SubmitLog automatically saves safe edits locally as you type. No popup interaction or manual setup required.
+- **Optimized Write Strategy:** 100ms debounced keystrokes, prompt flushes on change (50ms) and focusout/blur (100ms), immediate flushes on submit, tab switch (visibility hidden), and pagehide, with 2.5s safety checkpoints.
+- **Last-Write-Wins Draft Model:** Each form identity (`origin|pathname|formFingerprint`) maintains exactly one authoritative current draft. No confusing version prompts.
+- **Seamless Reload Restore:** Refreshing (F5) or navigating back to a form automatically restores your latest draft into empty fields while never overwriting values restored by the site or entered by you.
+- **Contextual Field Assistant:** Subtle inline pencil assistant next to eligible form fields for instant single-field fill, updates, and clipboard copy.
+- **Deterministic Form Matching:** Recognizes matching forms by semantic questions and structure, allowing full form fill from prior submissions.
+- **Non-Destructive Submission Updates:** Update existing archived submissions or create new snapshots with automatic revision history.
+- **Strict Separation of Archive vs. Drafts:** Explicit snapshots in the Archive remain untouched when drafts are edited or cleared.
+- **Sensitive Field Guard:** Passwords, OTP/2FA codes, payment card numbers, CVVs, and hidden inputs are strictly excluded.
+- **Strict Private Browsing Block:** Automatically disables all capture, autosave, and assistant operations in Incognito or Private Browsing windows.
+- **Full-Text Local Search & Export:** Search past answers by keyword, question, or domain. Export as Markdown or JSON anytime.
+
+---
 
 ## Privacy Philosophy
 
-SubmitLog is built on strict privacy principles:
+SubmitLog is built on uncompromising privacy principles:
 
-- **No backend** — all data stays on your local device in the browser's IndexedDB
-- **No accounts or login** — nothing to sign up for
-- **No telemetry or analytics** — we don't track usage
-- **No network requests** — captured data is never transmitted
-- **Sensitive field exclusion** — passwords, OTP codes, payment details, and hidden fields are automatically excluded from capture
-- **Explicit capture only** — the extension cannot read a page until you invoke it
+- **No backend** — all data stays on your local device in extension-owned IndexedDB
+- **No accounts or logins** — works out of the box with zero sign-up
+- **No telemetry or analytics** — no trackers, no pings, no usage metrics
+- **No network transmission** — captured submissions and drafts are never transmitted
+- **Strict form scoping** — only arms on genuine application and submission forms; search bars (like Google Search) and navigation inputs are strictly ignored
+- **30-day draft retention** — in-progress drafts older than 30 days are automatically cleaned up
 
-See [PRIVACY.md](./PRIVACY.md) for the full privacy architecture.
+See [PRIVACY.md](./PRIVACY.md) for full privacy architecture details.
+
+---
+
+## Permissions
+
+SubmitLog requests host access for `http://*/*` and `https://*/*` in order to automatically detect meaningful forms, persist drafts locally as you type, and restore your answers if the page reloads.
+
+- **Chromium (MV3):** Declared via `host_permissions: ["http://*/*", "https://*/*"]`
+- **Firefox (MV2):** Declared via `permissions: ["activeTab", "scripting", "storage", "http://*/*", "https://*/*"]`
+
+All form inspection and draft saves happen exclusively on your device. Zero bytes are ever transmitted over the network.
+
+---
 
 ## Supported Browsers
 
-- Google Chrome
+- Google Chrome (Manifest V3)
 - Microsoft Edge
 - Brave
 - Other Chromium-based browsers
-- Mozilla Firefox
+- Mozilla Firefox (Manifest V2 / Gecko target)
 
-## Current MVP Capabilities (v0.1)
-
-- Explicit one-click form capture from any web page
-- Intelligent label/question extraction (label, aria, placeholder, fallback)
-- Automatic sensitive field detection and exclusion
-- Preview and field selection before saving
-- Local archive with search across titles, hostnames, questions, and answers
-- Individual submission detail view with Q&A display
-- Edit submission titles
-- Copy individual answers or all answers as Markdown
-- Export submissions as JSON or Markdown
-- Export entire archive as JSON
-- Delete submissions with confirmation
-- Light and dark theme (follows system preference)
-- Cross-browser support (Chromium + Firefox from a single codebase)
+---
 
 ## Development Setup
 
@@ -62,98 +80,55 @@ npm install
 
 ### Development Commands
 
-| Command                 | Description                               |
-| ----------------------- | ----------------------------------------- |
-| `npm run dev`           | Start Chromium dev server with hot reload |
-| `npm run dev:firefox`   | Start Firefox dev server with hot reload  |
-| `npm run build`         | Production build for Chromium             |
-| `npm run build:firefox` | Production build for Firefox              |
-| `npm run test`          | Run unit tests                            |
-| `npm run lint`          | Run ESLint                                |
-| `npm run typecheck`     | Run TypeScript type checking              |
-| `npm run format`        | Format code with Prettier                 |
+| Command                 | Description                                          |
+| ----------------------- | ---------------------------------------------------- |
+| `npm run dev`           | Start Chromium dev server with hot reload            |
+| `npm run dev:firefox`   | Start Firefox dev server with hot reload             |
+| `npm run build`         | Production build for Chromium (`.output/chrome-mv3`) |
+| `npm run build:firefox` | Production build for Firefox (`.output/firefox-mv2`) |
+| `npm run test`          | Run Vitest test suite                                |
+| `npm run lint`          | Run ESLint checks                                    |
+| `npm run typecheck`     | Run TypeScript compiler type checking                |
+| `npm run format:check`  | Verify code formatting with Prettier                 |
+| `npm run format`        | Format all code with Prettier                        |
 
-### Loading the Extension
+---
 
-**Chromium (Chrome/Edge/Brave):**
+## Loading the Extension
+
+### Chromium (Chrome / Edge / Brave)
 
 1. Run `npm run build`
-2. Open `chrome://extensions` (or equivalent)
-3. Enable "Developer mode"
-4. Click "Load unpacked" and select `.output/chrome-mv3`
+2. Navigate to `chrome://extensions`
+3. Enable **Developer mode** (top-right toggle)
+4. Click **Load unpacked** and select the `.output/chrome-mv3` folder
 
-**Firefox:**
+### Firefox
 
 1. Run `npm run build:firefox`
-2. Open `about:debugging#/runtime/this-firefox`
-3. Click "Load Temporary Add-on"
-4. Select any file in `.output/firefox-mv2`
+2. Navigate to `about:debugging#/runtime/this-firefox`
+3. Click **Load Temporary Add-on...**
+4. Select `manifest.json` inside the `.output/firefox-mv2` folder
+
+---
 
 ## Architecture
 
-| Layer     | Technology                                                |
-| --------- | --------------------------------------------------------- |
-| Framework | [WXT](https://wxt.dev)                                    |
-| UI        | React 19                                                  |
-| Language  | TypeScript (strict mode)                                  |
-| Storage   | IndexedDB via [idb](https://github.com/jakearchibald/idb) |
-| Testing   | Vitest + happy-dom                                        |
-| Linting   | ESLint + Prettier                                         |
+| Layer       | Technology                                                    |
+| ----------- | ------------------------------------------------------------- |
+| Framework   | [WXT](https://wxt.dev)                                        |
+| UI          | React 19                                                      |
+| Language    | TypeScript (Strict Mode)                                      |
+| Storage     | Extension-owned IndexedDB (`submissions` and `drafts` stores) |
+| Permissions | `activeTab`, `scripting`, `storage`, host permissions         |
+| Testing     | Vitest + happy-dom                                            |
+| Formatting  | Prettier + ESLint                                             |
 
-## Project Structure
-
-```
-submitlog/
-├── entrypoints/           # WXT entrypoints
-│   ├── popup/             # Extension popup UI
-│   ├── archive/           # Full-page archive dashboard
-│   └── styles/            # Shared CSS
-├── src/
-│   ├── models/            # TypeScript data models
-│   ├── capture/           # Form discovery, label extraction, sensitive filter
-│   ├── storage/           # IndexedDB repository
-│   ├── export/            # JSON and Markdown export
-│   └── utils/             # Shared utilities
-├── tests/
-│   ├── fixtures/          # HTML test fixtures
-│   └── *.test.ts          # Unit tests
-├── wxt.config.ts          # WXT configuration
-├── PRIVACY.md             # Privacy architecture
-├── SECURITY.md            # Security documentation
-└── CONTRIBUTING.md        # Contributor guide
-```
-
-## Permissions
-
-SubmitLog requests only the minimum permissions necessary:
-
-- **activeTab** — read the current page only when the user clicks the extension
-- **scripting** — inject the capture script into the active tab
-- **storage** — store small application preferences locally
-
-The extension does **not** request `<all_urls>` or persistent host permissions.
-
-## Current Limitations
-
-- Manual capture only (no automatic submission detection)
-- Basic support for standard HTML form controls; advanced rich-text editors may not be fully captured
-- File inputs capture filenames only, never file contents
-- No encrypted backup/restore yet
-- No browser store distribution yet
-
-## Roadmap
-
-Future possibilities (not yet implemented):
-
-- Opt-in capture-on-submit for selected domains
-- Encrypted local backup and restore
-- Import/export archive
-- Answer reuse and comparison
-- Richer form framework adapters
+---
 
 ## Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for setup instructions and standards.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for contributor guidance and coding standards.
 
 ## License
 

@@ -31,6 +31,7 @@ export const ALLOWED_FIXTURES = new Set([
   'multi-step-application.html',
   'shadow-dom-application.html',
   'iframe-application.html',
+  'google-forms-style-application.html',
 ]);
 
 /**

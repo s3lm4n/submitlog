@@ -6,9 +6,7 @@ export interface SensitiveCheckResult {
 const SENSITIVE_PATTERNS =
   /password|passwd|pwd|otp|totp|mfa|cvv|cvc|cardnumber|card-number|cc-num|secret|token|auth_token|auth-token|authtoken|oauth|bearer|ssn|social-security/i;
 
-export function checkSensitiveField(
-  element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
-): SensitiveCheckResult {
+export function checkSensitiveField(element: HTMLElement): SensitiveCheckResult {
   if (element instanceof HTMLInputElement) {
     if (element.type === 'password') {
       return { isSensitive: true, reason: 'Type is password' };

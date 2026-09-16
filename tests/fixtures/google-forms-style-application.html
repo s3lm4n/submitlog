@@ -1,0 +1,91 @@
+<!-- 
+  Title: Google Forms Style Application Fixture
+  Purpose: Verify generic detection and capture of div-based question cards,
+           role="radio" ARIA radiogroups, multi-step Next buttons, and required markers
+           without an enclosing native <form> element.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Fellowship & Accelerator Application - Intake</title>
+  </head>
+  <body>
+    <!-- Top banner / header -->
+    <header>
+      <h1>Global Innovation Fellowship 2026</h1>
+      <p>Please complete all required questions to submit your application.</p>
+    </header>
+
+    <!-- Main application content (No native <form>) -->
+    <div class="form-container" role="list">
+      <!-- Question Card 1: Email (Text input in custom wrapper) -->
+      <div role="listitem" class="question-card" id="card-email">
+        <div role="heading" aria-level="3" class="question-header">
+          <span class="question-title">Email</span>
+          <span class="required-asterisk" aria-label="Required question">*</span>
+        </div>
+        <div class="input-wrapper">
+          <input
+            type="email"
+            class="quantum-input"
+            aria-label="Email"
+            value="alice@innovate.org"
+            required
+          />
+        </div>
+      </div>
+
+      <!-- Question Card 2: Program Choice (ARIA role-based radiogroup) -->
+      <div role="listitem" class="question-card" id="card-program">
+        <div role="heading" aria-level="3" class="question-header" id="program-heading">
+          <span class="question-title">Which program are you applying to?</span>
+          <span class="required-asterisk" aria-label="Required question">*</span>
+        </div>
+        <div
+          role="radiogroup"
+          aria-labelledby="program-heading"
+          aria-required="true"
+          class="radio-group-container"
+        >
+          <div
+            role="radio"
+            class="radio-option"
+            aria-checked="false"
+            aria-label="Founder Fellowship"
+            data-value="Founder Fellowship"
+            tabindex="0"
+          >
+            <span class="option-text">Founder Fellowship</span>
+          </div>
+          <div
+            role="radio"
+            class="radio-option"
+            aria-checked="true"
+            aria-label="Scale Accelerator"
+            data-value="Scale Accelerator"
+            tabindex="-1"
+          >
+            <span class="option-text">Scale Accelerator</span>
+          </div>
+          <div
+            role="radio"
+            class="radio-option"
+            aria-checked="false"
+            aria-label="Research Residency"
+            data-value="Research Residency"
+            tabindex="-1"
+          >
+            <span class="option-text">Research Residency</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Multi-step workflow navigation bar -->
+      <div class="workflow-navigation">
+        <div role="button" class="btn-next" tabindex="0">Next</div>
+        <div class="progress-indicator">Page 1 / 3</div>
+      </div>
+    </div>
+  </body>
+</html>

@@ -4,6 +4,7 @@ import { checkSensitiveField } from './sensitive-filter';
 import { extractLabel, isLabelMeaningful } from './label-extractor';
 import { extractValue } from './value-extractor';
 import { scoreFormCandidate, isUtilityForm, type ScoredFieldCandidate } from './form-scorer';
+import { computeFormFingerprint } from '../matching/form-fingerprint';
 import { generateId } from '../utils/id';
 
 export interface CandidateDiagnostic {
@@ -32,6 +33,8 @@ export interface CaptureResult {
   formDetected: boolean;
   answeredCount: number;
   inaccessibleFrameDetected?: boolean;
+  formFingerprint?: string;
+  detectedFields?: Array<{ label: string; fieldType: string; excluded?: boolean }>;
   diagnostics?: FormDiagnosticInfo;
 }
 
@@ -42,6 +45,7 @@ interface ProcessedCandidate {
   meaningfulFieldCount: number;
   excludedCount: number;
   answeredCount: number;
+  discoveredFields: Array<{ label: string; fieldType: string; excluded?: boolean }>;
 }
 
 export function captureFormData(doc: Document, url: string): CaptureResult {
@@ -65,6 +69,7 @@ export function captureFormData(doc: Document, url: string): CaptureResult {
     const discovered = discoverFormFields(candidate);
     const capturedAnswers: CapturedField[] = [];
     const scoredFields: ScoredFieldCandidate[] = [];
+    const discoveredFields: Array<{ label: string; fieldType: string; excluded?: boolean }> = [];
     let meaningfulFieldCount = 0;
     let excludedCount = 0;
     let answeredCount = 0;
@@ -79,9 +84,11 @@ export function captureFormData(doc: Document, url: string): CaptureResult {
         excludedCount++;
         meaningfulFieldCount++;
         const labelResult = extractLabel(element, doc);
+        const sensLabel = labelResult.label || 'Sensitive Field';
+        discoveredFields.push({ label: sensLabel, fieldType, excluded: true });
         capturedAnswers.push({
           id: generateId(),
-          label: labelResult.label || 'Sensitive Field',
+          label: sensLabel,
           value: '',
           fieldType,
           labelSource: labelResult.source,
@@ -99,6 +106,7 @@ export function captureFormData(doc: Document, url: string): CaptureResult {
       }
 
       meaningfulFieldCount++;
+      discoveredFields.push({ label: labelResult.label, fieldType, excluded: false });
 
       // 3. Value extraction & Answer determination
       let value = '';
@@ -162,6 +170,7 @@ export function captureFormData(doc: Document, url: string): CaptureResult {
         meaningfulFieldCount,
         excludedCount,
         answeredCount,
+        discoveredFields,
       });
     }
   }
@@ -217,6 +226,8 @@ export function captureFormData(doc: Document, url: string): CaptureResult {
     };
   }
 
+  const formFingerprint = computeFormFingerprint(hostname, best.discoveredFields);
+
   return {
     fields: best.capturedAnswers,
     pageTitle: title,
@@ -227,6 +238,8 @@ export function captureFormData(doc: Document, url: string): CaptureResult {
     excludedCount: best.excludedCount,
     formDetected: true,
     answeredCount: best.answeredCount,
+    formFingerprint,
+    detectedFields: best.discoveredFields,
     diagnostics: {
       candidateCount: candidates.length,
       candidates: diagnostics,

@@ -13,6 +13,7 @@ export function SubmissionDetail({ submission, onBack, onDelete, onUpdate }: Pro
   const [editingTitle, setEditingTitle] = useState(false);
   const [title, setTitle] = useState(submission.submissionTitle);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
+  const [showRevisions, setShowRevisions] = useState(false);
 
   async function handleTitleSave() {
     if (title.trim() && title !== submission.submissionTitle) {
@@ -43,6 +44,9 @@ export function SubmissionDetail({ submission, onBack, onDelete, onUpdate }: Pro
     const md = exportAsMarkdown(submission);
     copyToClipboard(md, 'all-md');
   }
+
+  const revisionsCount = submission.revisions?.length || 1;
+  const lastUpdated = submission.updatedAt || submission.createdAt;
 
   return (
     <div className="archive-container">
@@ -81,13 +85,25 @@ export function SubmissionDetail({ submission, onBack, onDelete, onUpdate }: Pro
                 {submission.hostname}
               </a>
               <span className="dot">&middot;</span>
-              <span>{new Date(submission.createdAt).toLocaleString()}</span>
+              <span>Updated: {new Date(lastUpdated).toLocaleString()}</span>
+              <span className="dot">&middot;</span>
+              <span>
+                {revisionsCount} {revisionsCount === 1 ? 'revision' : 'revisions'}
+              </span>
               <span className="dot">&middot;</span>
               <span>{submission.fields.length} fields</span>
             </div>
           </div>
 
           <div className="header-actions">
+            {submission.revisions && submission.revisions.length > 1 && (
+              <button
+                onClick={() => setShowRevisions(!showRevisions)}
+                className="btn btn-secondary"
+              >
+                {showRevisions ? 'Hide Revisions' : `Revisions (${submission.revisions.length})`}
+              </button>
+            )}
             <button onClick={handleCopyAllMarkdown} className="btn btn-secondary">
               {copyFeedback === 'all-md' ? 'Copied' : 'Copy all as Markdown'}
             </button>
@@ -105,6 +121,25 @@ export function SubmissionDetail({ submission, onBack, onDelete, onUpdate }: Pro
       </header>
 
       <main className="archive-main detail-main">
+        {showRevisions && submission.revisions && submission.revisions.length > 0 && (
+          <div className="revisions-panel">
+            <h3>Revision History</h3>
+            <div className="revisions-list">
+              {submission.revisions.map((rev, idx) => (
+                <div key={rev.id} className="revision-card">
+                  <div className="revision-card-header">
+                    <span className="revision-badge">Revision {revisionsCount - idx}</span>
+                    <span className="revision-time">
+                      {new Date(rev.createdAt).toLocaleString()}
+                    </span>
+                  </div>
+                  {rev.changeNote && <div className="revision-note">{rev.changeNote}</div>}
+                  <div className="revision-meta">{rev.fields.length} fields captured</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="qa-list">
           {submission.fields.length === 0 ? (
             <div className="empty-state">No fields captured in this submission.</div>

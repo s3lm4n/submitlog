@@ -2,6 +2,12 @@ import type { FieldType } from '../models/submission';
 import { extractLabel } from './label-extractor';
 
 export function getFieldType(element: HTMLElement): FieldType {
+  const role = element.getAttribute('role')?.toLowerCase();
+  if (role === 'radio') return 'radio';
+  if (role === 'checkbox') return 'checkbox';
+  if (role === 'textbox') return 'text';
+  if (role === 'combobox' || role === 'listbox') return 'select';
+
   if (element instanceof HTMLTextAreaElement) return 'textarea';
   if (element instanceof HTMLSelectElement) return 'select';
   if (element instanceof HTMLInputElement) {
@@ -26,6 +32,42 @@ export function getFieldType(element: HTMLElement): FieldType {
 
 export function extractValue(element: HTMLElement): string {
   let value = '';
+
+  const role = element.getAttribute('role')?.toLowerCase();
+  if (role === 'radio') {
+    const isChecked =
+      element.getAttribute('aria-checked') === 'true' ||
+      element.classList.contains('checked') ||
+      element.classList.contains('is-checked');
+    if (isChecked) {
+      value =
+        element.getAttribute('aria-label') ||
+        element.getAttribute('data-value') ||
+        element.textContent?.trim() ||
+        'Selected';
+    } else {
+      value = '';
+    }
+    return value.replace(/\s+/g, ' ').trim();
+  }
+
+  if (role === 'checkbox') {
+    const isChecked =
+      element.getAttribute('aria-checked') === 'true' ||
+      element.classList.contains('checked') ||
+      element.classList.contains('is-checked');
+    return isChecked ? 'Checked' : '';
+  }
+
+  if (role === 'textbox') {
+    value =
+      element.textContent ||
+      (element as HTMLElement).innerText ||
+      element.getAttribute('value') ||
+      '';
+    return value.replace(/\s+/g, ' ').trim();
+  }
+
   if (element instanceof HTMLInputElement) {
     const type = element.type.toLowerCase();
     if (type === 'checkbox') {

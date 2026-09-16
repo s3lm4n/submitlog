@@ -214,10 +214,20 @@ export function scoreFormCandidate(
   // Multi-step / tabbed application structure
   if (
     container.querySelector('[role="tabpanel"], [role="tablist"], .step, .tab-pane, .form-step') ||
-    role === 'tabpanel'
+    role === 'tabpanel' ||
+    /page\s+\d+\s*[-of/]+\s*\d+/i.test(container.textContent || '')
   ) {
     score += 15;
     reasons.push('Multi-step or tabbed application structure (+15)');
+  }
+
+  // Structured question list structure (e.g. div-based question cards or role="list")
+  if (
+    role === 'list' ||
+    container.querySelectorAll('[role="listitem"], .question-card').length >= 2
+  ) {
+    score += 15;
+    reasons.push('Structured question list structure (+15)');
   }
 
   if (

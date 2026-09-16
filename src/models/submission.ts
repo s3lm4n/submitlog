@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export interface CapturedField {
   id: string;
@@ -35,14 +35,26 @@ export type LabelSource =
   | 'id-fallback'
   | 'unknown';
 
+export interface SubmissionRevision {
+  id: string;
+  createdAt: string; // ISO 8601
+  fields: CapturedField[];
+  changeNote?: string;
+}
+
 export interface Submission {
   id: string;
   schemaVersion: number;
   createdAt: string; // ISO 8601
+  updatedAt?: string; // ISO 8601
   pageTitle: string;
   pageUrl: string;
   hostname: string;
   submissionTitle: string;
   fields: CapturedField[];
   captureVersion: string;
+  formFingerprint?: string;
+  revisions?: SubmissionRevision[];
+  lastEditingSessionId?: string;
+  isDraft?: boolean;
 }

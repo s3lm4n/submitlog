@@ -114,12 +114,16 @@ export function Archive() {
                     <span>{sub.hostname}</span>
                   </div>
                   <div className="meta-item">
-                    <span className="meta-label">Date</span>
-                    <span>{new Date(sub.createdAt).toLocaleString()}</span>
+                    <span className="meta-label">Updated</span>
+                    <span>{new Date(sub.updatedAt || sub.createdAt).toLocaleDateString()}</span>
+                  </div>
+                  <div className="meta-item">
+                    <span className="meta-label">Revisions</span>
+                    <span>{sub.revisions?.length || 1}</span>
                   </div>
                   <div className="meta-item">
                     <span className="meta-label">Fields</span>
-                    <span>{sub.fields.length} captured</span>
+                    <span>{sub.fields.length} saved answers</span>
                   </div>
                 </div>
                 <div className="card-actions">

@@ -16,6 +16,7 @@ export default defineConfig({
     if (browser === 'firefox') {
       return {
         ...baseManifest,
+        permissions: ['activeTab', 'scripting', 'storage', 'http://*/*', 'https://*/*'],
         browser_specific_settings: {
           gecko: {
             id: 'submitlog@s3lm4n.github.io',
@@ -27,6 +28,9 @@ export default defineConfig({
       };
     }
 
-    return baseManifest;
+    return {
+      ...baseManifest,
+      host_permissions: ['http://*/*', 'https://*/*'],
+    };
   },
 });

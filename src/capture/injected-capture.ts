@@ -14,12 +14,19 @@ export interface InjectedCapturedField {
   excludeReason?: string;
 }
 
+export interface InjectedDetectedField {
+  label: string;
+  fieldType: string;
+  excluded?: boolean;
+}
+
 export interface InjectedScanResult {
   formDetected: boolean;
   totalFields: number;
   answeredCount: number;
   score: number;
   inaccessibleFrameDetected?: boolean;
+  detectedFields?: InjectedDetectedField[];
 }
 
 export interface InjectedCaptureResult {
@@ -30,6 +37,7 @@ export interface InjectedCaptureResult {
   includedCount: number;
   answeredCount: number;
   inaccessibleFrameDetected?: boolean;
+  detectedFields?: InjectedDetectedField[];
 }
 
 /**
@@ -80,6 +88,7 @@ export function scanPageForms(): InjectedScanResult {
     function walk(node: Node) {
       if (node instanceof HTMLElement) {
         const tag = node.tagName.toLowerCase();
+        let isControl = false;
         if (tag === 'input' || tag === 'textarea' || tag === 'select') {
           const type = tag === 'input' ? (node as HTMLInputElement).type.toLowerCase() : '';
           if (
@@ -89,7 +98,33 @@ export function scanPageForms(): InjectedScanResult {
             type !== 'image' &&
             type !== 'reset'
           ) {
-            if (isVisible(node)) controls.push(node);
+            isControl = true;
+          }
+        } else {
+          const role = node.getAttribute('role')?.toLowerCase();
+          if (
+            role === 'radio' ||
+            role === 'checkbox' ||
+            role === 'textbox' ||
+            role === 'combobox' ||
+            role === 'listbox' ||
+            (node.isContentEditable && !node.parentElement?.isContentEditable)
+          ) {
+            isControl = true;
+          }
+        }
+        if (isControl && isVisible(node)) {
+          controls.push(node);
+          const role = node.getAttribute('role')?.toLowerCase();
+          if (
+            tag === 'input' ||
+            tag === 'textarea' ||
+            tag === 'select' ||
+            role === 'radio' ||
+            role === 'checkbox'
+          ) {
+            if (node.shadowRoot) walk(node.shadowRoot);
+            return;
           }
         }
         if (node.shadowRoot) walk(node.shadowRoot);
@@ -166,24 +201,42 @@ export function scanPageForms(): InjectedScanResult {
     return SENSITIVE_PATTERN.test(combined);
   }
 
+  function normalizeAndCleanLabel(text: string): string {
+    let cleaned = text
+      .replace(/\s*Required question\s*/gi, '')
+      .replace(/[\s*]+$/, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!cleaned) cleaned = text.replace(/\s+/g, ' ').trim();
+    return cleaned.length > 500 ? cleaned.substring(0, 497) + '...' : cleaned;
+  }
+
   function getLabelText(el: HTMLElement): string {
     if (el.id) {
       const l = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-      if (l?.textContent?.trim()) return l.textContent.trim();
+      if (l?.textContent?.trim()) return normalizeAndCleanLabel(l.textContent);
     }
 
-    if (el instanceof HTMLInputElement && el.type === 'radio') {
+    const role = el.getAttribute('role')?.toLowerCase();
+    const isRadio = (el instanceof HTMLInputElement && el.type === 'radio') || role === 'radio';
+    if (isRadio) {
       const group = el.closest('[role="group"], [role="radiogroup"]');
       if (group) {
         const gLabel = group.getAttribute('aria-label');
-        if (gLabel?.trim()) return gLabel.trim();
+        if (gLabel?.trim()) return normalizeAndCleanLabel(gLabel);
         const gLabelledby = group.getAttribute('aria-labelledby');
         if (gLabelledby) {
           const parts = gLabelledby
             .split(/\s+/)
             .map((refId) => document.getElementById(refId)?.textContent?.trim())
             .filter(Boolean);
-          if (parts.length > 0) return parts.join(' ');
+          if (parts.length > 0) return normalizeAndCleanLabel(parts.join(' '));
+        }
+        const gHeading = group.querySelector(
+          'h1, h2, h3, h4, h5, h6, [role="heading"], .group-label',
+        );
+        if (gHeading && gHeading.textContent?.trim() && !gHeading.contains(el)) {
+          return normalizeAndCleanLabel(gHeading.textContent);
         }
       }
     }
@@ -193,7 +246,7 @@ export function scanPageForms(): InjectedScanResult {
       const clone = wrap.cloneNode(true) as HTMLElement;
       clone.querySelectorAll('input, textarea, select').forEach((i) => i.remove());
       const t = clone.textContent?.trim();
-      if (t) return t;
+      if (t) return normalizeAndCleanLabel(t);
     }
     const ariaLabelledby = el.getAttribute('aria-labelledby');
     if (ariaLabelledby) {
@@ -201,44 +254,97 @@ export function scanPageForms(): InjectedScanResult {
         .split(/\s+/)
         .map((refId) => document.getElementById(refId)?.textContent?.trim())
         .filter(Boolean);
-      if (parts.length > 0) return parts.join(' ');
+      if (parts.length > 0) return normalizeAndCleanLabel(parts.join(' '));
     }
     const ariaLabel = el.getAttribute('aria-label');
-    if (ariaLabel?.trim()) return ariaLabel.trim();
+    if (ariaLabel?.trim()) return normalizeAndCleanLabel(ariaLabel);
 
     const fieldset = el.closest('fieldset');
     if (fieldset) {
       const leg = fieldset.querySelector('legend');
-      if (leg?.textContent?.trim()) return leg.textContent.trim();
+      if (leg?.textContent?.trim()) return normalizeAndCleanLabel(leg.textContent);
+    }
+
+    const groupContainer = el.closest('[role="radiogroup"], [role="group"]');
+    if (groupContainer) {
+      const gAria = groupContainer.getAttribute('aria-label');
+      if (gAria?.trim()) return normalizeAndCleanLabel(gAria);
+      const gLabelledby = groupContainer.getAttribute('aria-labelledby');
+      if (gLabelledby) {
+        const parts = gLabelledby
+          .split(/\s+/)
+          .map((refId) => document.getElementById(refId)?.textContent?.trim())
+          .filter(Boolean);
+        if (parts.length > 0) return normalizeAndCleanLabel(parts.join(' '));
+      }
     }
 
     const questionCard = el.closest(
-      '[role="listitem"], .form-group, .question, .field, .form-row, .field-wrapper',
+      '[role="listitem"], .form-group, .question, .question-card, .field, .form-row, .field-wrapper',
     );
     if (questionCard) {
       const heading = questionCard.querySelector<HTMLElement>(
         'h1, h2, h3, h4, h5, h6, [role="heading"], .question-title, .field-label',
       );
       if (heading?.textContent?.trim() && !heading.contains(el)) {
-        return heading.textContent.trim();
+        return normalizeAndCleanLabel(heading.textContent);
       }
     }
 
+    const prevElem = el.previousElementSibling;
+    if (prevElem && prevElem.textContent?.trim() && prevElem.textContent.trim().length < 200) {
+      return normalizeAndCleanLabel(prevElem.textContent);
+    }
+
     const placeholder = el.getAttribute('placeholder');
-    if (placeholder?.trim()) return placeholder.trim();
+    if (placeholder?.trim()) return normalizeAndCleanLabel(placeholder);
 
     const name = el.getAttribute('name');
-    if (name?.trim()) return name.trim();
+    if (name?.trim()) return normalizeAndCleanLabel(name);
 
     const id = el.getAttribute('id');
-    if (id?.trim()) return id.trim();
+    if (id?.trim()) return normalizeAndCleanLabel(id);
 
     return '';
   }
 
   function getFieldValue(el: HTMLElement): string {
+    const role = el.getAttribute('role')?.toLowerCase();
+    if (role === 'radio') {
+      const isChecked =
+        el.getAttribute('aria-checked') === 'true' ||
+        el.classList.contains('checked') ||
+        el.classList.contains('is-checked');
+      if (isChecked) {
+        const val =
+          el.getAttribute('data-value') ||
+          el.getAttribute('aria-label') ||
+          el.textContent?.trim() ||
+          'Selected';
+        return val.replace(/\s+/g, ' ').trim();
+      }
+      return '';
+    }
+    if (role === 'checkbox') {
+      const isChecked =
+        el.getAttribute('aria-checked') === 'true' ||
+        el.classList.contains('checked') ||
+        el.classList.contains('is-checked');
+      return isChecked ? 'Checked' : '';
+    }
+    if (role === 'textbox') {
+      const val = el.textContent || (el as HTMLElement).innerText || el.getAttribute('value') || '';
+      return val.replace(/\s+/g, ' ').trim();
+    }
     if (el instanceof HTMLInputElement) {
       if (el.type === 'checkbox') return el.checked ? 'Checked' : '';
+      if (el.type === 'radio') {
+        if (el.checked) {
+          const l = getLabelText(el);
+          return l || el.value || 'Selected';
+        }
+        return '';
+      }
       if (el.type === 'file') {
         return el.files && el.files.length > 0
           ? `${Array.from(el.files)
@@ -280,6 +386,7 @@ export function scanPageForms(): InjectedScanResult {
     totalFields: number;
     answeredCount: number;
     score: number;
+    detectedFields?: InjectedDetectedField[];
   }
 
   const assigned = new Set<HTMLElement>();
@@ -314,23 +421,68 @@ export function scanPageForms(): InjectedScanResult {
     }
   }
 
-  // Grouping 3: Semantic SPA containers or fieldsets
+  // Grouping 3: Semantic SPA containers or Question card lists
   const unassignedAfterRoles = allControls.filter((c) => !assigned.has(c));
   if (unassignedAfterRoles.length > 0) {
     const containers = Array.from(
       document.querySelectorAll(
-        '[role="tabpanel"], [role="region"], fieldset, section, article, div, main',
+        '[role="tabpanel"], [role="region"], [role="list"], fieldset, section, article, div, main',
       ),
     ).filter((el) => {
       if (el === document.body || el === document.documentElement) return false;
-      const idAndClass = `${el.id} ${el.className}`;
-      const role = el.getAttribute('role');
+      const idAndClass = `${el.id} ${el.className}`.toLowerCase();
+      const role = el.getAttribute('role')?.toLowerCase();
+
+      const questionCardCount = el.querySelectorAll(
+        '[role="listitem"], .question-card, .question, .form-group, .field-wrapper',
+      ).length;
+
+      const buttons = Array.from(
+        el.querySelectorAll(
+          'button, input[type="submit"], input[type="button"], a.btn, div[role="button"]',
+        ),
+      );
+      const hasWorkflowBtn = buttons.some((b) =>
+        SUBMIT_BUTTON_PATTERNS.test((b.textContent || (b as HTMLInputElement).value || '').trim()),
+      );
+
+      const hasStepIndicator =
+        /page\s+\d+\s*[-of/]+\s*\d+/i.test(el.textContent || '') ||
+        Boolean(el.querySelector('.step, .form-step, .tab-pane, [role="tabpanel"]'));
+
+      const containsControls =
+        el.querySelectorAll(
+          'input, textarea, select, [role="radio"], [role="checkbox"], [role="textbox"]',
+        ).length >= 2;
+
       return (
         role === 'tabpanel' ||
         role === 'region' ||
+        (role === 'list' && containsControls) ||
         el.tagName.toLowerCase() === 'fieldset' ||
-        APPLICATION_PATTERNS.test(idAndClass)
+        el.tagName.toLowerCase() === 'section' ||
+        APPLICATION_PATTERNS.test(idAndClass) ||
+        (questionCardCount >= 2 && containsControls) ||
+        (hasWorkflowBtn && containsControls) ||
+        (hasStepIndicator && containsControls)
       );
+    });
+
+    containers.sort((a, b) => {
+      const aHasBtn = a.querySelector(
+        'button, [role="button"], input[type="submit"], input[type="button"]',
+      )
+        ? 1
+        : 0;
+      const bHasBtn = b.querySelector(
+        'button, [role="button"], input[type="submit"], input[type="button"]',
+      )
+        ? 1
+        : 0;
+      if (aHasBtn !== bHasBtn) return bHasBtn - aHasBtn;
+      const aCtrlCount = unassignedAfterRoles.filter((c) => a.contains(c)).length;
+      const bCtrlCount = unassignedAfterRoles.filter((c) => b.contains(c)).length;
+      return bCtrlCount - aCtrlCount;
     });
 
     for (const c of containers) {
@@ -360,13 +512,26 @@ export function scanPageForms(): InjectedScanResult {
         parent.tagName.toLowerCase() !== 'main' &&
         parent.parentElement &&
         parent.parentElement !== document.body &&
-        parent.querySelectorAll('input, textarea, select').length <= 20
+        parent.querySelectorAll(
+          'input, textarea, select, [role="radio"], [role="checkbox"], [role="textbox"]',
+        ).length <= 20
       ) {
+        const isSingleCard =
+          parent.getAttribute('role') === 'listitem' ||
+          parent.classList.contains('question') ||
+          parent.classList.contains('question-card') ||
+          parent.classList.contains('form-group') ||
+          parent.classList.contains('field-wrapper') ||
+          parent.querySelectorAll(
+            'input, textarea, select, [role="radio"], [role="checkbox"], [role="textbox"]',
+          ).length <= 1;
+
         if (
-          parent.tagName.toLowerCase() === 'div' ||
-          parent.tagName.toLowerCase() === 'section' ||
-          parent.tagName.toLowerCase() === 'article' ||
-          parent.tagName.toLowerCase() === 'fieldset'
+          !isSingleCard &&
+          (parent.tagName.toLowerCase() === 'div' ||
+            parent.tagName.toLowerCase() === 'section' ||
+            parent.tagName.toLowerCase() === 'article' ||
+            parent.tagName.toLowerCase() === 'fieldset')
         ) {
           break;
         }
@@ -392,27 +557,64 @@ export function scanPageForms(): InjectedScanResult {
     let textareaCount = 0;
     const seenRadioGroups = new Set<string>();
     const labelsSeen = new Set<string>();
+    const detectedFields: InjectedDetectedField[] = [];
 
     for (const el of elements) {
       if (isSensitive(el)) {
         totalMeaningful++;
+        const sensLabel = getLabelText(el) || 'Sensitive Field';
+        detectedFields.push({ label: sensLabel, fieldType: 'password', excluded: true });
         continue;
       }
 
       const label = getLabelText(el);
       if (!label) continue;
 
-      if (el instanceof HTMLInputElement && el.type === 'radio' && el.name) {
-        if (seenRadioGroups.has(el.name)) continue;
-        seenRadioGroups.add(el.name);
+      const role = el.getAttribute('role')?.toLowerCase();
+      const isRadio = (el instanceof HTMLInputElement && el.type === 'radio') || role === 'radio';
+      if (isRadio) {
+        let groupKey = el.getAttribute('name') || '';
+        const groupContainer = el.closest('[role="radiogroup"], [role="group"]');
+        if (!groupKey) {
+          if (groupContainer) {
+            groupKey =
+              groupContainer.id ||
+              groupContainer.getAttribute('aria-label') ||
+              groupContainer.getAttribute('aria-labelledby') ||
+              'radiogroup';
+          } else {
+            const card = el.closest(
+              '[role="listitem"], .question-card, .question, .form-group, .field',
+            );
+            groupKey = card?.id || 'radiogroup';
+          }
+        }
+        if (seenRadioGroups.has(groupKey)) continue;
+        seenRadioGroups.add(groupKey);
         totalMeaningful++;
         score += 15;
         labelsSeen.add(label.toLowerCase());
+        detectedFields.push({ label, fieldType: 'radio', excluded: false });
 
-        const checked = container.querySelector(
-          `input[type="radio"][name="${CSS.escape(el.name)}"]:checked`,
-        );
-        if (checked) answered++;
+        let isAnyChecked = false;
+        if (el instanceof HTMLInputElement && el.name) {
+          isAnyChecked = Boolean(
+            container.querySelector(`input[type="radio"][name="${CSS.escape(el.name)}"]:checked`),
+          );
+        } else if (groupContainer) {
+          isAnyChecked = Array.from(groupContainer.querySelectorAll('[role="radio"]')).some(
+            (r) =>
+              r.getAttribute('aria-checked') === 'true' ||
+              r.classList.contains('checked') ||
+              r.classList.contains('is-checked'),
+          );
+        } else {
+          isAnyChecked =
+            el.getAttribute('aria-checked') === 'true' ||
+            el.classList.contains('checked') ||
+            el.classList.contains('is-checked');
+        }
+        if (isAnyChecked) answered++;
         continue;
       }
 
@@ -422,22 +624,27 @@ export function scanPageForms(): InjectedScanResult {
       const val = getFieldValue(el);
       if (val) answered++;
 
+      let type = 'text';
       if (el instanceof HTMLTextAreaElement) {
+        type = 'textarea';
         textareaCount++;
         score += 25;
       } else if (
         el instanceof HTMLInputElement &&
         ['email', 'tel', 'url', 'number', 'date'].includes(el.type)
       ) {
+        type = el.type;
         score += 15;
-      } else if (
-        el instanceof HTMLSelectElement ||
-        (el instanceof HTMLInputElement && el.type === 'checkbox')
-      ) {
+      } else if (el instanceof HTMLSelectElement) {
+        type = 'select';
+        score += 12;
+      } else if (el instanceof HTMLInputElement && el.type === 'checkbox') {
+        type = 'checkbox';
         score += 12;
       } else {
         score += 10;
       }
+      detectedFields.push({ label, fieldType: type, excluded: false });
     }
 
     if (totalMeaningful >= 2) score += 15;
@@ -451,6 +658,25 @@ export function scanPageForms(): InjectedScanResult {
 
     const idAndClass = `${container.id} ${container.className}`.toLowerCase();
     if (APPLICATION_PATTERNS.test(idAndClass)) score += 20;
+
+    // Multi-step / tabbed application structure
+    if (
+      container.querySelector(
+        '[role="tabpanel"], [role="tablist"], .step, .tab-pane, .form-step',
+      ) ||
+      container.getAttribute('role') === 'tabpanel' ||
+      /page\s+\d+\s*[-of/]+\s*\d+/i.test(container.textContent || '')
+    ) {
+      score += 15;
+    }
+
+    // Structured question list structure
+    if (
+      container.getAttribute('role') === 'list' ||
+      container.querySelectorAll('[role="listitem"], .question-card').length >= 2
+    ) {
+      score += 15;
+    }
 
     const btns = Array.from(
       container.querySelectorAll(
@@ -482,6 +708,7 @@ export function scanPageForms(): InjectedScanResult {
         totalFields: totalMeaningful,
         answeredCount: answered,
         score,
+        detectedFields,
       });
     }
   }
@@ -515,6 +742,7 @@ export function scanPageForms(): InjectedScanResult {
     answeredCount: best.answeredCount,
     score: best.score,
     inaccessibleFrameDetected: false,
+    detectedFields: best.detectedFields,
   };
 }
 
@@ -572,6 +800,7 @@ export function capturePageForms(): InjectedCaptureResult {
     function walk(node: Node) {
       if (node instanceof HTMLElement) {
         const tag = node.tagName.toLowerCase();
+        let isControl = false;
         if (tag === 'input' || tag === 'textarea' || tag === 'select') {
           const type = tag === 'input' ? (node as HTMLInputElement).type.toLowerCase() : '';
           if (
@@ -581,7 +810,33 @@ export function capturePageForms(): InjectedCaptureResult {
             type !== 'image' &&
             type !== 'reset'
           ) {
-            if (isVisible(node)) controls.push(node);
+            isControl = true;
+          }
+        } else {
+          const role = node.getAttribute('role')?.toLowerCase();
+          if (
+            role === 'radio' ||
+            role === 'checkbox' ||
+            role === 'textbox' ||
+            role === 'combobox' ||
+            role === 'listbox' ||
+            (node.isContentEditable && !node.parentElement?.isContentEditable)
+          ) {
+            isControl = true;
+          }
+        }
+        if (isControl && isVisible(node)) {
+          controls.push(node);
+          const role = node.getAttribute('role')?.toLowerCase();
+          if (
+            tag === 'input' ||
+            tag === 'textarea' ||
+            tag === 'select' ||
+            role === 'radio' ||
+            role === 'checkbox'
+          ) {
+            if (node.shadowRoot) walk(node.shadowRoot);
+            return;
           }
         }
         if (node.shadowRoot) walk(node.shadowRoot);
@@ -658,26 +913,44 @@ export function capturePageForms(): InjectedCaptureResult {
     return SENSITIVE_PATTERN.test(combined);
   }
 
+  function normalizeAndCleanLabel(text: string): string {
+    let cleaned = text
+      .replace(/\s*Required question\s*/gi, '')
+      .replace(/[\s*]+$/, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!cleaned) cleaned = text.replace(/\s+/g, ' ').trim();
+    return cleaned.length > 500 ? cleaned.substring(0, 497) + '...' : cleaned;
+  }
+
   function getLabelText(el: HTMLElement): string {
     if (el.id) {
       const l = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
       if (l?.textContent?.trim()) {
-        return l.textContent.trim();
+        return normalizeAndCleanLabel(l.textContent);
       }
     }
 
-    if (el instanceof HTMLInputElement && el.type === 'radio') {
+    const role = el.getAttribute('role')?.toLowerCase();
+    const isRadio = (el instanceof HTMLInputElement && el.type === 'radio') || role === 'radio';
+    if (isRadio) {
       const group = el.closest('[role="group"], [role="radiogroup"]');
       if (group) {
         const gLabel = group.getAttribute('aria-label');
-        if (gLabel?.trim()) return gLabel.trim();
+        if (gLabel?.trim()) return normalizeAndCleanLabel(gLabel);
         const gLabelledby = group.getAttribute('aria-labelledby');
         if (gLabelledby) {
           const parts = gLabelledby
             .split(/\s+/)
             .map((refId) => document.getElementById(refId)?.textContent?.trim())
             .filter(Boolean);
-          if (parts.length > 0) return parts.join(' ');
+          if (parts.length > 0) return normalizeAndCleanLabel(parts.join(' '));
+        }
+        const gHeading = group.querySelector(
+          'h1, h2, h3, h4, h5, h6, [role="heading"], .group-label',
+        );
+        if (gHeading && gHeading.textContent?.trim() && !gHeading.contains(el)) {
+          return normalizeAndCleanLabel(gHeading.textContent);
         }
       }
     }
@@ -687,7 +960,7 @@ export function capturePageForms(): InjectedCaptureResult {
       const clone = wrap.cloneNode(true) as HTMLElement;
       clone.querySelectorAll('input, textarea, select').forEach((i) => i.remove());
       const t = clone.textContent?.trim();
-      if (t) return t;
+      if (t) return normalizeAndCleanLabel(t);
     }
     const ariaLabelledby = el.getAttribute('aria-labelledby');
     if (ariaLabelledby) {
@@ -696,55 +969,108 @@ export function capturePageForms(): InjectedCaptureResult {
         .map((refId) => document.getElementById(refId)?.textContent?.trim())
         .filter(Boolean);
       if (parts.length > 0) {
-        return parts.join(' ');
+        return normalizeAndCleanLabel(parts.join(' '));
       }
     }
     const ariaLabel = el.getAttribute('aria-label');
     if (ariaLabel?.trim()) {
-      return ariaLabel.trim();
+      return normalizeAndCleanLabel(ariaLabel);
     }
 
     const fieldset = el.closest('fieldset');
     if (fieldset) {
       const leg = fieldset.querySelector('legend');
       if (leg?.textContent?.trim()) {
-        return leg.textContent.trim();
+        return normalizeAndCleanLabel(leg.textContent);
+      }
+    }
+
+    const groupContainer = el.closest('[role="radiogroup"], [role="group"]');
+    if (groupContainer) {
+      const gAria = groupContainer.getAttribute('aria-label');
+      if (gAria?.trim()) return normalizeAndCleanLabel(gAria);
+      const gLabelledby = groupContainer.getAttribute('aria-labelledby');
+      if (gLabelledby) {
+        const parts = gLabelledby
+          .split(/\s+/)
+          .map((refId) => document.getElementById(refId)?.textContent?.trim())
+          .filter(Boolean);
+        if (parts.length > 0) return normalizeAndCleanLabel(parts.join(' '));
       }
     }
 
     const questionCard = el.closest(
-      '[role="listitem"], .form-group, .question, .field, .form-row, .field-wrapper',
+      '[role="listitem"], .form-group, .question, .question-card, .field, .form-row, .field-wrapper',
     );
     if (questionCard) {
       const heading = questionCard.querySelector<HTMLElement>(
         'h1, h2, h3, h4, h5, h6, [role="heading"], .question-title, .field-label',
       );
       if (heading?.textContent?.trim() && !heading.contains(el)) {
-        return heading.textContent.trim();
+        return normalizeAndCleanLabel(heading.textContent);
       }
+    }
+
+    const prevElem = el.previousElementSibling;
+    if (prevElem && prevElem.textContent?.trim() && prevElem.textContent.trim().length < 200) {
+      return normalizeAndCleanLabel(prevElem.textContent);
     }
 
     const placeholder = el.getAttribute('placeholder');
     if (placeholder?.trim()) {
-      return placeholder.trim();
+      return normalizeAndCleanLabel(placeholder);
     }
 
     const name = el.getAttribute('name');
     if (name?.trim()) {
-      return name.trim();
+      return normalizeAndCleanLabel(name);
     }
 
     const id = el.getAttribute('id');
     if (id?.trim()) {
-      return id.trim();
+      return normalizeAndCleanLabel(id);
     }
 
     return '';
   }
 
   function getFieldValue(el: HTMLElement): string {
+    const role = el.getAttribute('role')?.toLowerCase();
+    if (role === 'radio') {
+      const isChecked =
+        el.getAttribute('aria-checked') === 'true' ||
+        el.classList.contains('checked') ||
+        el.classList.contains('is-checked');
+      if (isChecked) {
+        const val =
+          el.getAttribute('data-value') ||
+          el.getAttribute('aria-label') ||
+          el.textContent?.trim() ||
+          'Selected';
+        return val.replace(/\s+/g, ' ').trim();
+      }
+      return '';
+    }
+    if (role === 'checkbox') {
+      const isChecked =
+        el.getAttribute('aria-checked') === 'true' ||
+        el.classList.contains('checked') ||
+        el.classList.contains('is-checked');
+      return isChecked ? 'Checked' : '';
+    }
+    if (role === 'textbox') {
+      const val = el.textContent || (el as HTMLElement).innerText || el.getAttribute('value') || '';
+      return val.replace(/\s+/g, ' ').trim();
+    }
     if (el instanceof HTMLInputElement) {
       if (el.type === 'checkbox') return el.checked ? 'Checked' : '';
+      if (el.type === 'radio') {
+        if (el.checked) {
+          const l = getLabelText(el);
+          return l || el.value || 'Selected';
+        }
+        return '';
+      }
       if (el.type === 'file') {
         return el.files && el.files.length > 0
           ? `${Array.from(el.files)
@@ -789,6 +1115,7 @@ export function capturePageForms(): InjectedCaptureResult {
     excludedCount: number;
     totalDetected: number;
     answeredCount: number;
+    detectedFields?: InjectedDetectedField[];
   }
 
   const assigned = new Set<HTMLElement>();
@@ -823,23 +1150,68 @@ export function capturePageForms(): InjectedCaptureResult {
     }
   }
 
-  // Grouping 3: Semantic containers
+  // Grouping 3: Semantic containers and Question card lists
   const unassignedAfterRoles = allControls.filter((c) => !assigned.has(c));
   if (unassignedAfterRoles.length > 0) {
     const containers = Array.from(
       document.querySelectorAll(
-        '[role="tabpanel"], [role="region"], fieldset, section, article, div, main',
+        '[role="tabpanel"], [role="region"], [role="list"], fieldset, section, article, div, main',
       ),
     ).filter((el) => {
       if (el === document.body || el === document.documentElement) return false;
-      const idAndClass = `${el.id} ${el.className}`;
-      const role = el.getAttribute('role');
+      const idAndClass = `${el.id} ${el.className}`.toLowerCase();
+      const role = el.getAttribute('role')?.toLowerCase();
+
+      const questionCardCount = el.querySelectorAll(
+        '[role="listitem"], .question-card, .question, .form-group, .field-wrapper',
+      ).length;
+
+      const buttons = Array.from(
+        el.querySelectorAll(
+          'button, input[type="submit"], input[type="button"], a.btn, div[role="button"]',
+        ),
+      );
+      const hasWorkflowBtn = buttons.some((b) =>
+        SUBMIT_BUTTON_PATTERNS.test((b.textContent || (b as HTMLInputElement).value || '').trim()),
+      );
+
+      const hasStepIndicator =
+        /page\s+\d+\s*[-of/]+\s*\d+/i.test(el.textContent || '') ||
+        Boolean(el.querySelector('.step, .form-step, .tab-pane, [role="tabpanel"]'));
+
+      const containsControls =
+        el.querySelectorAll(
+          'input, textarea, select, [role="radio"], [role="checkbox"], [role="textbox"]',
+        ).length >= 2;
+
       return (
         role === 'tabpanel' ||
         role === 'region' ||
+        (role === 'list' && containsControls) ||
         el.tagName.toLowerCase() === 'fieldset' ||
-        APPLICATION_PATTERNS.test(idAndClass)
+        el.tagName.toLowerCase() === 'section' ||
+        APPLICATION_PATTERNS.test(idAndClass) ||
+        (questionCardCount >= 2 && containsControls) ||
+        (hasWorkflowBtn && containsControls) ||
+        (hasStepIndicator && containsControls)
       );
+    });
+
+    containers.sort((a, b) => {
+      const aHasBtn = a.querySelector(
+        'button, [role="button"], input[type="submit"], input[type="button"]',
+      )
+        ? 1
+        : 0;
+      const bHasBtn = b.querySelector(
+        'button, [role="button"], input[type="submit"], input[type="button"]',
+      )
+        ? 1
+        : 0;
+      if (aHasBtn !== bHasBtn) return bHasBtn - aHasBtn;
+      const aCtrlCount = unassignedAfterRoles.filter((c) => a.contains(c)).length;
+      const bCtrlCount = unassignedAfterRoles.filter((c) => b.contains(c)).length;
+      return bCtrlCount - aCtrlCount;
     });
 
     for (const c of containers) {
@@ -869,13 +1241,26 @@ export function capturePageForms(): InjectedCaptureResult {
         parent.tagName.toLowerCase() !== 'main' &&
         parent.parentElement &&
         parent.parentElement !== document.body &&
-        parent.querySelectorAll('input, textarea, select').length <= 20
+        parent.querySelectorAll(
+          'input, textarea, select, [role="radio"], [role="checkbox"], [role="textbox"]',
+        ).length <= 20
       ) {
+        const isSingleCard =
+          parent.getAttribute('role') === 'listitem' ||
+          parent.classList.contains('question') ||
+          parent.classList.contains('question-card') ||
+          parent.classList.contains('form-group') ||
+          parent.classList.contains('field-wrapper') ||
+          parent.querySelectorAll(
+            'input, textarea, select, [role="radio"], [role="checkbox"], [role="textbox"]',
+          ).length <= 1;
+
         if (
-          parent.tagName.toLowerCase() === 'div' ||
-          parent.tagName.toLowerCase() === 'section' ||
-          parent.tagName.toLowerCase() === 'article' ||
-          parent.tagName.toLowerCase() === 'fieldset'
+          !isSingleCard &&
+          (parent.tagName.toLowerCase() === 'div' ||
+            parent.tagName.toLowerCase() === 'section' ||
+            parent.tagName.toLowerCase() === 'article' ||
+            parent.tagName.toLowerCase() === 'fieldset')
         ) {
           break;
         }
@@ -896,6 +1281,7 @@ export function capturePageForms(): InjectedCaptureResult {
     if (isUtility(container)) return;
 
     const fields: InjectedCapturedField[] = [];
+    const detectedFields: InjectedDetectedField[] = [];
     let excludedCount = 0;
     let totalMeaningful = 0;
     let answered = 0;
@@ -915,9 +1301,11 @@ export function capturePageForms(): InjectedCaptureResult {
             : el instanceof HTMLSelectElement
               ? 'select'
               : (el as HTMLInputElement).type || 'text';
+        const sensLabel = labelInfo || 'Sensitive Field';
+        detectedFields.push({ label: sensLabel, fieldType: fType, excluded: true });
         fields.push({
           id: crypto.randomUUID(),
-          label: labelInfo || 'Sensitive Field',
+          label: sensLabel,
           value: '',
           fieldType: fType,
           labelSource: 'unknown',
@@ -930,22 +1318,73 @@ export function capturePageForms(): InjectedCaptureResult {
       const labelInfo = getLabelText(el);
       if (!labelInfo) continue; // Unknown Field Policy: exclude unlabeled controls
 
-      totalMeaningful++;
-      labelsSeen.add(labelInfo.toLowerCase());
+      const role = el.getAttribute('role')?.toLowerCase();
+      const isRadio = (el instanceof HTMLInputElement && el.type === 'radio') || role === 'radio';
+      if (isRadio) {
+        let groupKey = el.getAttribute('name') || '';
+        const groupContainer = el.closest('[role="radiogroup"], [role="group"]');
+        if (!groupKey) {
+          if (groupContainer) {
+            groupKey =
+              groupContainer.id ||
+              groupContainer.getAttribute('aria-label') ||
+              groupContainer.getAttribute('aria-labelledby') ||
+              'radiogroup';
+          } else {
+            const card = el.closest(
+              '[role="listitem"], .question-card, .question, .form-group, .field',
+            );
+            groupKey = card?.id || 'radiogroup';
+          }
+        }
+        if (seenRadioGroups.has(groupKey)) continue;
+        seenRadioGroups.add(groupKey);
+        totalMeaningful++;
+        score += 15;
+        labelsSeen.add(labelInfo.toLowerCase());
+        detectedFields.push({ label: labelInfo, fieldType: 'radio', excluded: false });
 
-      // Radio group consolidation
-      if (el instanceof HTMLInputElement && el.type === 'radio' && el.name) {
-        if (seenRadioGroups.has(el.name)) continue;
-        seenRadioGroups.add(el.name);
+        let radioVal = '';
+        if (el instanceof HTMLInputElement && el.name) {
+          const radios = container.querySelectorAll<HTMLInputElement>(
+            `input[type="radio"][name="${CSS.escape(el.name)}"]`,
+          );
+          const checked = Array.from(radios).find((r) => r.checked);
+          if (checked) {
+            const checkedLabel = getLabelText(checked);
+            radioVal = checkedLabel || checked.value || 'Selected';
+          }
+        } else if (groupContainer) {
+          const radios = Array.from(groupContainer.querySelectorAll<HTMLElement>('[role="radio"]'));
+          const checked = radios.find(
+            (r) =>
+              r.getAttribute('aria-checked') === 'true' ||
+              r.classList.contains('checked') ||
+              r.classList.contains('is-checked'),
+          );
+          if (checked) {
+            radioVal =
+              checked.getAttribute('data-value') ||
+              checked.getAttribute('aria-label') ||
+              checked.textContent?.trim() ||
+              'Selected';
+          }
+        } else {
+          if (
+            el.getAttribute('aria-checked') === 'true' ||
+            el.classList.contains('checked') ||
+            el.classList.contains('is-checked')
+          ) {
+            radioVal =
+              el.getAttribute('data-value') ||
+              el.getAttribute('aria-label') ||
+              el.textContent?.trim() ||
+              'Selected';
+          }
+        }
 
-        const radios = container.querySelectorAll<HTMLInputElement>(
-          `input[type="radio"][name="${CSS.escape(el.name)}"]`,
-        );
-        const checked = Array.from(radios).find((r) => r.checked);
-        if (checked) {
+        if (radioVal) {
           answered++;
-          const checkedLabel = getLabelText(checked);
-          const radioVal = checkedLabel || checked.value || 'Selected';
           fields.push({
             id: crypto.randomUUID(),
             label: labelInfo,
@@ -955,9 +1394,11 @@ export function capturePageForms(): InjectedCaptureResult {
             excluded: false,
           });
         }
-        score += 15;
         continue;
       }
+
+      totalMeaningful++;
+      labelsSeen.add(labelInfo.toLowerCase());
 
       // Checkbox group consolidation if multiple with same name
       if (el instanceof HTMLInputElement && el.type === 'checkbox' && el.name) {
@@ -966,6 +1407,7 @@ export function capturePageForms(): InjectedCaptureResult {
         );
         if (sameName.length > 1) {
           if (fields.some((f) => f.label === labelInfo)) continue;
+          detectedFields.push({ label: labelInfo, fieldType: 'checkbox', excluded: false });
           const checkedBoxes = Array.from(sameName).filter((c) => c.checked);
           if (checkedBoxes.length > 0) {
             answered++;
@@ -987,15 +1429,17 @@ export function capturePageForms(): InjectedCaptureResult {
         }
       }
 
+      const fType =
+        el instanceof HTMLTextAreaElement
+          ? 'textarea'
+          : el instanceof HTMLSelectElement
+            ? 'select'
+            : (el as HTMLInputElement).type || (role === 'textbox' ? 'text' : role || 'text');
+      detectedFields.push({ label: labelInfo, fieldType: fType, excluded: false });
+
       const val = getFieldValue(el);
       if (val) {
         answered++;
-        const fType =
-          el instanceof HTMLTextAreaElement
-            ? 'textarea'
-            : el instanceof HTMLSelectElement
-              ? 'select'
-              : (el as HTMLInputElement).type || 'text';
 
         fields.push({
           id: crypto.randomUUID(),
@@ -1037,6 +1481,25 @@ export function capturePageForms(): InjectedCaptureResult {
     const idAndClass = `${container.id} ${container.className}`.toLowerCase();
     if (APPLICATION_PATTERNS.test(idAndClass)) score += 20;
 
+    // Multi-step / tabbed application structure
+    if (
+      container.querySelector(
+        '[role="tabpanel"], [role="tablist"], .step, .tab-pane, .form-step',
+      ) ||
+      container.getAttribute('role') === 'tabpanel' ||
+      /page\s+\d+\s*[-of/]+\s*\d+/i.test(container.textContent || '')
+    ) {
+      score += 15;
+    }
+
+    // Structured question list structure
+    if (
+      container.getAttribute('role') === 'list' ||
+      container.querySelectorAll('[role="listitem"], .question-card').length >= 2
+    ) {
+      score += 15;
+    }
+
     const btns = Array.from(
       container.querySelectorAll(
         'button, input[type="submit"], input[type="button"], a.btn, div[role="button"]',
@@ -1068,6 +1531,7 @@ export function capturePageForms(): InjectedCaptureResult {
         excludedCount,
         totalDetected: totalMeaningful,
         answeredCount: answered,
+        detectedFields,
       });
     }
   }
@@ -1107,5 +1571,6 @@ export function capturePageForms(): InjectedCaptureResult {
     includedCount: winner.answeredCount,
     answeredCount: winner.answeredCount,
     inaccessibleFrameDetected: false,
+    detectedFields: winner.detectedFields,
   };
 }

@@ -1,0 +1,62 @@
+<!-- 
+  Title: Two Unrelated Forms Fixture
+  Purpose: Verify that unrelated forms on the same page are scoped independently and not merged.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Company Careers & Newsletter</title>
+  </head>
+  <body>
+    <!-- Minor unrelated form: Newsletter signup -->
+    <aside>
+      <form id="newsletter-form" action="/subscribe" method="post">
+        <h3>Stay Updated</h3>
+        <label for="newsletterEmail">Email</label>
+        <input
+          type="email"
+          id="newsletterEmail"
+          name="newsletter_email"
+          value="subscriber@example.com"
+        />
+        <button type="submit">Subscribe</button>
+      </form>
+    </aside>
+
+    <!-- Major primary form: Job Application -->
+    <main>
+      <form id="job-app-form" action="/careers/apply" method="post">
+        <h2>Software Architect Application</h2>
+
+        <div>
+          <label for="candidateName">Full Name</label>
+          <input type="text" id="candidateName" name="candidateName" value="Alex Rivera" />
+        </div>
+
+        <div>
+          <label for="candidateEmail">Email</label>
+          <input
+            type="email"
+            id="candidateEmail"
+            name="candidateEmail"
+            value="alex.rivera@example.com"
+          />
+        </div>
+
+        <div>
+          <label for="candidatePhone">Phone</label>
+          <input type="tel" id="candidatePhone" name="candidatePhone" value="+1-555-8392" />
+        </div>
+
+        <div>
+          <label for="coverLetter">Why are you a fit for this role?</label>
+          <textarea id="coverLetter" name="coverLetter">
+Over 10 years designing distributed systems and client-side extensions.</textarea>
+        </div>
+
+        <button type="submit">Submit Application</button>
+      </form>
+    </main>
+  </body>
+</html>

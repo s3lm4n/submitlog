@@ -1,0 +1,45 @@
+<!-- 
+  Title: Search and Utility Page Fixture
+  Purpose: Test rejection of search/navigation/toolbar UI so that no submission form is detected.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Search Engine & Utility Portal</title>
+  </head>
+  <body>
+    <!-- Site Navigation & Toolbar -->
+    <nav role="navigation">
+      <a href="/">Home</a>
+      <a href="/images">Images</a>
+      <div role="toolbar">
+        <button type="button">Quick Tools</button>
+        <button type="button">Settings</button>
+      </div>
+    </nav>
+
+    <main>
+      <!-- Search Form (should be rejected as utility/search UI) -->
+      <form id="search-form" action="/search" method="get" role="search">
+        <input
+          type="search"
+          name="q"
+          aria-label="Search the web"
+          placeholder="Search Google or type a URL"
+          value="javascript tutorials"
+        />
+        <button type="submit">Search</button>
+      </form>
+
+      <!-- Utility Filter Controls -->
+      <div class="filters-panel">
+        <label for="date-range">Date Range:</label>
+        <input type="date" id="date-range" name="filter_date" value="" />
+
+        <label for="file-upload">Upload an image to search:</label>
+        <input type="file" id="file-upload" name="image_search" />
+      </div>
+    </main>
+  </body>
+</html>

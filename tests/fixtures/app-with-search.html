@@ -1,0 +1,67 @@
+<!-- 
+  Title: Application Page with Site Search Fixture
+  Purpose: Verify that only the genuine application form is captured, excluding site search.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Civic Grant Portal - Apply</title>
+  </head>
+  <body>
+    <!-- Site header search (should be ignored) -->
+    <header>
+      <nav>
+        <form id="nav-search" action="/search" role="search">
+          <input type="text" name="q" placeholder="Search site articles..." value="grants 2026" />
+          <button type="submit">Search</button>
+        </form>
+      </nav>
+    </header>
+
+    <main>
+      <!-- Legitimate Application Form -->
+      <form id="grant-application" method="post" action="/submit-grant">
+        <h2>Civic Innovation Grant Application</h2>
+
+        <div>
+          <label for="applicantName">Applicant Name</label>
+          <input type="text" id="applicantName" name="applicantName" value="Jordan Smith" />
+        </div>
+
+        <div>
+          <label for="applicantEmail">Contact Email</label>
+          <input
+            type="email"
+            id="applicantEmail"
+            name="applicantEmail"
+            value="jordan@civiclabs.org"
+          />
+        </div>
+
+        <div>
+          <label for="projectTitle">Project Title</label>
+          <input
+            type="text"
+            id="projectTitle"
+            name="projectTitle"
+            value="Open Air Quality Monitors"
+          />
+        </div>
+
+        <div>
+          <label for="proposalAbstract">Proposal Summary</label>
+          <textarea id="proposalAbstract" name="proposalAbstract">
+Deploying 50 open-source air quality sensors across underserved neighborhoods.</textarea>
+        </div>
+
+        <div>
+          <label for="requestedBudget">Requested Budget (USD)</label>
+          <input type="number" id="requestedBudget" name="requestedBudget" value="45000" />
+        </div>
+
+        <button type="submit">Submit Application</button>
+      </form>
+    </main>
+  </body>
+</html>

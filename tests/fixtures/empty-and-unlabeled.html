@@ -1,0 +1,38 @@
+<!-- 
+  Title: Empty and Unlabeled Fields Fixture
+  Purpose: Verify that empty file inputs and unlabeled controls are omitted from capture.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Feedback & Upload</title>
+  </head>
+  <body>
+    <form id="feedback-form" method="post" action="/feedback">
+      <!-- Valid labeled field with value -->
+      <div>
+        <label for="feedbackAuthor">Your Name</label>
+        <input type="text" id="feedbackAuthor" name="author" value="Morgan Lee" />
+      </div>
+
+      <div>
+        <label for="feedbackComments">Feedback</label>
+        <textarea id="feedbackComments" name="comments">Great onboarding experience.</textarea>
+      </div>
+
+      <!-- Empty file input: MUST be excluded -->
+      <div>
+        <label for="attachment">Attachment (optional)</label>
+        <input type="file" id="attachment" name="attachment" />
+      </div>
+
+      <!-- Unlabeled input with no name/id/placeholder/aria: MUST be excluded -->
+      <div>
+        <input type="text" value="Orphaned Text Without Label" />
+      </div>
+
+      <button type="submit">Submit Feedback</button>
+    </form>
+  </body>
+</html>

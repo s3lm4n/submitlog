@@ -1,0 +1,42 @@
+<!-- 
+  Title: Unlabeled Fields Form Fixture
+  Purpose: Test heuristic fallback extraction when inputs lack explicit labels.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Unlabeled Fields</title>
+  </head>
+  <body>
+    <form id="unlabeled-form">
+      <!-- Input with only name attribute -->
+      <div>
+        <input type="text" name="city" value="Seattle" />
+      </div>
+
+      <!-- Input with only id attribute -->
+      <div>
+        <input type="text" id="zipcode" value="98101" />
+      </div>
+
+      <!-- Input with only placeholder -->
+      <div>
+        <input type="text" placeholder="Enter your occupation" value="Developer" />
+      </div>
+
+      <!-- Input with no identifiers at all -->
+      <div>
+        <input type="text" value="Mystery Value" />
+      </div>
+
+      <!-- Input inside a div with nearby text -->
+      <div>
+        Favorite Color:
+        <input type="text" value="Blue" />
+      </div>
+
+      <button type="submit">Submit</button>
+    </form>
+  </body>
+</html>

@@ -1,0 +1,141 @@
+<!-- 
+  Title: Sample Application Form Fixture
+  Purpose: Test a realistic, full-length application form.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>TechVentures Accelerator Application</title>
+  </head>
+  <body>
+    <h1>TechVentures Accelerator Application</h1>
+
+    <form id="accelerator-app">
+      <div>
+        <label for="fullName">Full name</label>
+        <input type="text" id="fullName" name="fullName" value="Alice Founder" />
+      </div>
+
+      <div>
+        <label for="email">Email</label>
+        <input type="email" id="email" name="email" value="alice@startup.io" />
+      </div>
+
+      <div>
+        <label for="linkedin">LinkedIn URL</label>
+        <input
+          type="url"
+          id="linkedin"
+          name="linkedin"
+          value="https://linkedin.com/in/alicefounder"
+        />
+      </div>
+
+      <div>
+        <label for="github">GitHub URL</label>
+        <input type="url" id="github" name="github" value="https://github.com/alicefounder" />
+      </div>
+
+      <div>
+        <label for="company">Company name</label>
+        <input type="text" id="company" name="company" value="NextGenTech" />
+      </div>
+
+      <div>
+        <label for="problem">What problem are you solving?</label>
+        <textarea id="problem" name="problem">
+Developers forget what they submit in long web forms.</textarea>
+      </div>
+
+      <div>
+        <label for="product">Describe your product</label>
+        <textarea id="product" name="product">
+A browser extension that locally logs form submissions.</textarea>
+      </div>
+
+      <div>
+        <label for="whyNow">Why now?</label>
+        <textarea id="whyNow" name="whyNow">
+Because privacy and personal data ownership is more important than ever.</textarea>
+      </div>
+
+      <div>
+        <label for="funding">Funding requested</label>
+        <select name="currency" aria-label="Currency">
+          <option value="usd" selected>USD</option>
+          <option value="eur">EUR</option>
+        </select>
+        <input type="number" id="funding" name="funding" value="500000" />
+      </div>
+
+      <div>
+        <label for="country">Country</label>
+        <select id="country" name="country">
+          <option value="">Select a country</option>
+          <option value="us" selected>United States</option>
+          <option value="ca">Canada</option>
+          <option value="uk">United Kingdom</option>
+          <option value="fr">France</option>
+          <option value="de">Germany</option>
+        </select>
+      </div>
+
+      <fieldset>
+        <legend>How did you hear about us?</legend>
+        <label><input type="radio" name="source" value="twitter" /> Twitter</label>
+        <label><input type="radio" name="source" value="linkedin" checked /> LinkedIn</label>
+        <label><input type="radio" name="source" value="friend" /> Friend</label>
+        <label><input type="radio" name="source" value="other" /> Other</label>
+      </fieldset>
+
+      <div>
+        <label>
+          <input type="checkbox" name="terms" value="accepted" checked /> I agree to the terms and
+          conditions
+        </label>
+      </div>
+
+      <!-- Should NOT be captured -->
+      <div>
+        <label for="password">Create an account password (optional)</label>
+        <input type="password" id="password" name="password" value="securePass123" />
+      </div>
+
+      <!-- Should NOT be captured -->
+      <div>
+        <label for="verification">OTP/Verification code</label>
+        <input
+          type="text"
+          id="verification"
+          name="verification"
+          autocomplete="one-time-code"
+          value="999999"
+        />
+      </div>
+
+      <button type="submit">Submit Application</button>
+    </form>
+
+    <script>
+      // Synthetic fixture helper: prevent page navigation upon form submission
+      document.getElementById('accelerator-app')?.addEventListener('submit', (event) => {
+        event.preventDefault();
+        let notice = document.getElementById('submission-notice');
+        if (!notice) {
+          notice = document.createElement('div');
+          notice.id = 'submission-notice';
+          notice.style.marginTop = '16px';
+          notice.style.padding = '10px 14px';
+          notice.style.background = '#e6f4ea';
+          notice.style.color = '#137333';
+          notice.style.borderRadius = '4px';
+          notice.style.fontSize = '14px';
+          document.getElementById('accelerator-app')?.appendChild(notice);
+        }
+        notice.textContent =
+          'Form submission intercepted for testing (navigation prevented). SubmitLog can still capture the form.';
+      });
+    </script>
+  </body>
+</html>

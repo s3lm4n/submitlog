@@ -1,0 +1,37 @@
+<!-- 
+  Title: Checkbox and Radio Form Fixture
+  Purpose: Test extraction of radio groups, checkbox groups, and standalone checkboxes.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Checkboxes and Radios</title>
+  </head>
+  <body>
+    <form id="check-radio-form">
+      <fieldset>
+        <legend>Experience level</legend>
+        <label><input type="radio" name="experience" value="junior" /> Junior</label>
+        <label><input type="radio" name="experience" value="mid" checked /> Mid</label>
+        <label><input type="radio" name="experience" value="senior" /> Senior</label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Technologies</legend>
+        <label><input type="checkbox" name="tech" value="react" checked /> React</label>
+        <label><input type="checkbox" name="tech" value="vue" /> Vue</label>
+        <label><input type="checkbox" name="tech" value="angular" /> Angular</label>
+        <label><input type="checkbox" name="tech" value="typescript" checked /> TypeScript</label>
+      </fieldset>
+
+      <div>
+        <label>
+          <input type="checkbox" name="terms" value="agreed" checked /> I agree to terms
+        </label>
+      </div>
+
+      <button type="submit">Complete</button>
+    </form>
+  </body>
+</html>

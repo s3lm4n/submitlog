@@ -1,0 +1,66 @@
+<!-- 
+  Title: Sensitive Fields Form Fixture
+  Purpose: Test the exclusion rules for sensitive data fields (passwords, OTPs, CCs, hidden inputs).
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Sensitive Fields</title>
+  </head>
+  <body>
+    <form id="sensitive-form">
+      <!-- Should be captured -->
+      <div>
+        <label for="username">Username:</label>
+        <input type="text" id="username" name="username" value="user123" />
+      </div>
+
+      <!-- Should NOT be captured -->
+      <div>
+        <label for="password">Password:</label>
+        <input type="password" id="password" name="password" value="superSecret1!" />
+      </div>
+
+      <!-- Should NOT be captured -->
+      <div>
+        <label for="confirm_password">Confirm password:</label>
+        <input
+          type="password"
+          id="confirm_password"
+          name="confirm_password"
+          value="superSecret1!"
+        />
+      </div>
+
+      <!-- Should NOT be captured -->
+      <div>
+        <label for="otp">OTP field:</label>
+        <input type="text" id="otp" name="otp" autocomplete="one-time-code" value="123456" />
+      </div>
+
+      <!-- Should NOT be captured -->
+      <div>
+        <label for="cc">Credit card number:</label>
+        <input type="text" id="cc" name="cc" autocomplete="cc-number" value="4111222233334444" />
+      </div>
+
+      <!-- Should NOT be captured -->
+      <div>
+        <label for="cvv">CVV:</label>
+        <input type="text" id="cvv" name="cvv" autocomplete="cc-csc" value="123" />
+      </div>
+
+      <!-- Should NOT be captured -->
+      <input type="hidden" name="session_token" value="abc123xyz890" />
+
+      <!-- Should be captured -->
+      <div>
+        <label for="bio">Regular text field (Bio):</label>
+        <input type="text" id="bio" name="bio" value="I am a software engineer." />
+      </div>
+
+      <button type="submit">Secure Submit</button>
+    </form>
+  </body>
+</html>

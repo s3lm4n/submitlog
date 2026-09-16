@@ -1,69 +1,138 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import type { Submission } from '../../src/models/submission';
+import type { FormDraft } from '../../src/models/draft';
 import { createSubmissionRepository } from '../../src/storage/submission-repository';
+import { createDraftRepository } from '../../src/storage/draft-repository';
 import { exportAllAsJson, downloadFile } from '../../src/export/exporter';
 import { SubmissionDetail } from './SubmissionDetail';
+import { DraftDetail } from './DraftDetail';
 import './archive.css';
 
 export function Archive() {
   const [submissions, setSubmissions] = useState<Submission[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [drafts, setDrafts] = useState<FormDraft[]>([]);
+  const [selectedSubmissionId, setSelectedSubmissionId] = useState<string | null>(null);
+  const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
 
-  const repo = useMemo(() => createSubmissionRepository(), []);
+  const subRepo = useMemo(() => createSubmissionRepository(), []);
+  const draftRepo = useMemo(() => createDraftRepository(), []);
 
-  const loadSubmissions = useCallback(async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await repo.getAll();
-      data.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      setSubmissions(data);
+      const [subsData, draftsData] = await Promise.all([
+        subRepo.getAll().catch(() => [] as Submission[]),
+        draftRepo.getAll().catch(() => [] as FormDraft[]),
+      ]);
+
+      subsData.sort(
+        (a: Submission, b: Submission) =>
+          new Date(b.updatedAt || b.createdAt).getTime() -
+          new Date(a.updatedAt || a.createdAt).getTime(),
+      );
+      draftsData.sort(
+        (a: FormDraft, b: FormDraft) =>
+          new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+      );
+
+      setSubmissions(subsData);
+      setDrafts(draftsData);
     } catch {
       setSubmissions([]);
+      setDrafts([]);
     } finally {
       setLoading(false);
     }
-  }, [repo]);
+  }, [subRepo, draftRepo]);
 
   useEffect(() => {
-    loadSubmissions();
-  }, [loadSubmissions]);
+    loadData();
+  }, [loadData]);
 
-  const filteredSubmissions = submissions.filter((sub) => {
-    const q = searchQuery.toLowerCase();
+  const q = searchQuery.toLowerCase().trim();
+
+  const filteredDrafts = drafts.filter((draft) => {
+    if (!q) return true;
+    const fieldsList = Object.values(draft.fields || {});
     return (
-      sub.submissionTitle.toLowerCase().includes(q) ||
-      sub.hostname.toLowerCase().includes(q) ||
-      sub.fields.some((f) => f.label.toLowerCase().includes(q) || f.value.toLowerCase().includes(q))
+      (draft.pageTitle && draft.pageTitle.toLowerCase().includes(q)) ||
+      (draft.hostname && draft.hostname.toLowerCase().includes(q)) ||
+      fieldsList.some(
+        (f) =>
+          (f.label && f.label.toLowerCase().includes(q)) ||
+          (f.value && f.value.toLowerCase().includes(q)),
+      )
     );
   });
 
-  async function handleDelete(id: string) {
+  const filteredSubmissions = submissions.filter((sub) => {
+    if (!q) return true;
+    return (
+      (sub.submissionTitle && sub.submissionTitle.toLowerCase().includes(q)) ||
+      (sub.hostname && sub.hostname.toLowerCase().includes(q)) ||
+      (sub.fields &&
+        sub.fields.some(
+          (f) =>
+            (f.label && f.label.toLowerCase().includes(q)) ||
+            (f.value && f.value.toLowerCase().includes(q)),
+        ))
+    );
+  });
+
+  async function handleDeleteSubmission(id: string) {
     if (!window.confirm('Are you sure you want to delete this submission?')) return;
-    await repo.delete(id);
-    if (selectedId === id) setSelectedId(null);
-    await loadSubmissions();
+    await subRepo.delete(id);
+    if (selectedSubmissionId === id) setSelectedSubmissionId(null);
+    await loadData();
   }
 
-  async function handleUpdate(updated: Submission) {
-    await repo.save(updated);
-    await loadSubmissions();
+  async function handleDeleteDraft(id: string) {
+    if (!window.confirm('Are you sure you want to delete this draft?')) return;
+    await draftRepo.delete(id);
+    if (selectedDraftId === id) setSelectedDraftId(null);
+    await loadData();
   }
 
-  if (selectedId) {
-    const selected = submissions.find((s) => s.id === selectedId);
-    if (selected) {
+  async function handleUpdateSubmission(updated: Submission) {
+    await subRepo.save(updated);
+    await loadData();
+  }
+
+  if (selectedDraftId) {
+    const selectedDraft = drafts.find((d) => d.id === selectedDraftId);
+    if (selectedDraft) {
       return (
-        <SubmissionDetail
-          submission={selected}
-          onBack={() => setSelectedId(null)}
-          onDelete={() => handleDelete(selected.id)}
-          onUpdate={handleUpdate}
+        <DraftDetail
+          draft={selectedDraft}
+          onBack={() => setSelectedDraftId(null)}
+          onDelete={() => handleDeleteDraft(selectedDraft.id)}
+          onConverted={async () => {
+            setSelectedDraftId(null);
+            await loadData();
+          }}
         />
       );
     }
   }
+
+  if (selectedSubmissionId) {
+    const selectedSub = submissions.find((s) => s.id === selectedSubmissionId);
+    if (selectedSub) {
+      return (
+        <SubmissionDetail
+          submission={selectedSub}
+          onBack={() => setSelectedSubmissionId(null)}
+          onDelete={() => handleDeleteSubmission(selectedSub.id)}
+          onUpdate={handleUpdateSubmission}
+        />
+      );
+    }
+  }
+
+  const hasAnyRecords = drafts.length > 0 || submissions.length > 0;
+  const hasMatchingRecords = filteredDrafts.length > 0 || filteredSubmissions.length > 0;
 
   return (
     <div className="archive-container">
@@ -73,7 +142,7 @@ export function Archive() {
           <div className="search-bar">
             <input
               type="text"
-              placeholder="Search submissions..."
+              placeholder="Search drafts and submissions..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
@@ -95,59 +164,146 @@ export function Archive() {
       <main className="archive-main">
         {loading ? (
           <div className="loading-state">Loading...</div>
-        ) : filteredSubmissions.length === 0 ? (
+        ) : !hasAnyRecords ? (
           <div className="empty-state">
-            {searchQuery
-              ? 'No matching submissions found.'
-              : 'Your archive is empty. Capture some forms!'}
+            Your archive is empty. Fill out forms or capture submissions to see them here!
           </div>
+        ) : !hasMatchingRecords ? (
+          <div className="empty-state">No matching drafts or submissions found.</div>
         ) : (
-          <div className="submissions-grid">
-            {filteredSubmissions.map((sub) => (
-              <div key={sub.id} className="submission-card" onClick={() => setSelectedId(sub.id)}>
-                <div className="card-header">
-                  <h3>{sub.submissionTitle}</h3>
+          <div className="archive-sections">
+            {/* Section 1: In progress (Autosaved Drafts) */}
+            {filteredDrafts.length > 0 && (
+              <section className="archive-section">
+                <div className="section-header">
+                  <h2>In progress ({filteredDrafts.length})</h2>
+                  <span className="section-subtext">Active autosaved drafts</span>
                 </div>
-                <div className="card-body">
-                  <div className="meta-item">
-                    <span className="meta-label">Site</span>
-                    <span>{sub.hostname}</span>
-                  </div>
-                  <div className="meta-item">
-                    <span className="meta-label">Updated</span>
-                    <span>{new Date(sub.updatedAt || sub.createdAt).toLocaleDateString()}</span>
-                  </div>
-                  <div className="meta-item">
-                    <span className="meta-label">Revisions</span>
-                    <span>{sub.revisions?.length || 1}</span>
-                  </div>
-                  <div className="meta-item">
-                    <span className="meta-label">Fields</span>
-                    <span>{sub.fields.length} saved answers</span>
-                  </div>
+                <div className="submissions-grid">
+                  {filteredDrafts.map((draft) => {
+                    const fieldsCount = Object.keys(draft.fields || {}).length;
+                    return (
+                      <div
+                        key={draft.id}
+                        className="submission-card draft-card"
+                        onClick={() => setSelectedDraftId(draft.id)}
+                      >
+                        <div className="card-header">
+                          <h3>{draft.pageTitle || draft.hostname}</h3>
+                          <span className="badge badge-draft">Draft</span>
+                        </div>
+                        <div className="card-body">
+                          <div className="meta-item">
+                            <span className="meta-label">Site</span>
+                            <span>{draft.hostname}</span>
+                          </div>
+                          <div className="meta-item">
+                            <span className="meta-label">Last saved</span>
+                            <span>
+                              {new Date(draft.updatedAt).toLocaleTimeString([], {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}{' '}
+                              ({new Date(draft.updatedAt).toLocaleDateString()})
+                            </span>
+                          </div>
+                          <div className="meta-item">
+                            <span className="meta-label">Fields</span>
+                            <span>
+                              {fieldsCount} saved {fieldsCount === 1 ? 'answer' : 'answers'}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="card-actions">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedDraftId(draft.id);
+                            }}
+                            className="btn btn-primary"
+                          >
+                            View Draft
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteDraft(draft.id);
+                            }}
+                            className="btn btn-danger"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-                <div className="card-actions">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelectedId(sub.id);
-                    }}
-                    className="btn btn-primary"
-                  >
-                    View Details
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDelete(sub.id);
-                    }}
-                    className="btn btn-danger"
-                  >
-                    Delete
-                  </button>
+              </section>
+            )}
+
+            {/* Section 2: Saved submissions (Explicit Captured Snapshots) */}
+            {filteredSubmissions.length > 0 && (
+              <section className="archive-section">
+                <div className="section-header">
+                  <h2>Saved submissions ({filteredSubmissions.length})</h2>
+                  <span className="section-subtext">Explicitly archived snapshots</span>
                 </div>
-              </div>
-            ))}
+                <div className="submissions-grid">
+                  {filteredSubmissions.map((sub) => (
+                    <div
+                      key={sub.id}
+                      className="submission-card"
+                      onClick={() => setSelectedSubmissionId(sub.id)}
+                    >
+                      <div className="card-header">
+                        <h3>{sub.submissionTitle}</h3>
+                        <span className="badge badge-saved">Saved</span>
+                      </div>
+                      <div className="card-body">
+                        <div className="meta-item">
+                          <span className="meta-label">Site</span>
+                          <span>{sub.hostname}</span>
+                        </div>
+                        <div className="meta-item">
+                          <span className="meta-label">Updated</span>
+                          <span>
+                            {new Date(sub.updatedAt || sub.createdAt).toLocaleDateString()}
+                          </span>
+                        </div>
+                        <div className="meta-item">
+                          <span className="meta-label">Revisions</span>
+                          <span>{sub.revisions?.length || 1}</span>
+                        </div>
+                        <div className="meta-item">
+                          <span className="meta-label">Fields</span>
+                          <span>{sub.fields.length} saved answers</span>
+                        </div>
+                      </div>
+                      <div className="card-actions">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedSubmissionId(sub.id);
+                          }}
+                          className="btn btn-primary"
+                        >
+                          View Details
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteSubmission(sub.id);
+                          }}
+                          className="btn btn-danger"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
           </div>
         )}
       </main>

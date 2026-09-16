@@ -5,6 +5,10 @@ import {
 import { findFieldMatch } from '../matching/field-matcher';
 import { isFieldSensitive, type AutosaveResponse } from './autosave-handler';
 import { getOrBuildAnswerIndex, invalidateCachedAnswerIndex } from '../assistant/answer-index';
+import {
+  createAnswerMemoryRepository,
+  type AnswerMemoryRepository,
+} from '../storage/answer-memory-repository';
 import type { Submission, CapturedField, FieldType } from '../models/submission';
 import { SCHEMA_VERSION } from '../models/submission';
 import { generateId } from '../utils/id';
@@ -54,13 +58,21 @@ export interface BootstrapAssistantResponse {
 export async function handleBootstrapAssistant(
   payload: BootstrapAssistantPayload,
   customRepo?: SubmissionRepository,
-  isIncognito?: boolean,
+  isIncognitoOrMemoryRepo?: boolean | AnswerMemoryRepository,
+  customAnswerMemoryRepo?: AnswerMemoryRepository,
 ): Promise<BootstrapAssistantResponse> {
+  const isIncognito =
+    typeof isIncognitoOrMemoryRepo === 'boolean' ? isIncognitoOrMemoryRepo : false;
+  const memoryRepo =
+    typeof isIncognitoOrMemoryRepo !== 'boolean' && isIncognitoOrMemoryRepo
+      ? isIncognitoOrMemoryRepo
+      : customAnswerMemoryRepo;
+
   if (isIncognito) {
     return { availableAnswers: {}, privateBrowsing: true };
   }
 
-  const index = await getOrBuildAnswerIndex(customRepo);
+  const index = await getOrBuildAnswerIndex(customRepo, memoryRepo);
   const availableAnswers = index.getAllAvailableForHost(payload.hostname);
   return { availableAnswers };
 }
@@ -71,8 +83,16 @@ export async function handleBootstrapAssistant(
 export async function handleGetFieldStatus(
   payload: FieldStatusPayload,
   customRepo?: SubmissionRepository,
-  isIncognito?: boolean,
+  isIncognitoOrMemoryRepo?: boolean | AnswerMemoryRepository,
+  customAnswerMemoryRepo?: AnswerMemoryRepository,
 ): Promise<FieldStatusResponse> {
+  const isIncognito =
+    typeof isIncognitoOrMemoryRepo === 'boolean' ? isIncognitoOrMemoryRepo : false;
+  const memoryRepo =
+    typeof isIncognitoOrMemoryRepo !== 'boolean' && isIncognitoOrMemoryRepo
+      ? isIncognitoOrMemoryRepo
+      : customAnswerMemoryRepo;
+
   if (isIncognito) {
     return {
       savedAnswer: '',
@@ -118,7 +138,7 @@ export async function handleGetFieldStatus(
   }
 
   // 2. Fallback to AnswerIndex for cross-submission suggestion matching
-  const index = await getOrBuildAnswerIndex(repo);
+  const index = await getOrBuildAnswerIndex(repo, memoryRepo);
   const suggestions = index.getSuggestions(field.label, hostname);
 
   if (suggestions.length > 0) {
@@ -208,6 +228,21 @@ export async function handleSaveFieldFromAssistant(
     };
 
     await repo.save(newSub);
+    try {
+      const memoryRepo = createAnswerMemoryRepository();
+      await memoryRepo.save({
+        id: `${hostname.toLowerCase()}::${field.label.toLowerCase().trim()}`,
+        normalizedLabel: field.label.toLowerCase().trim(),
+        label: field.label,
+        fieldType: field.fieldType,
+        value: trimmedValue,
+        updatedAt: now,
+        hostname,
+        source: 'archived',
+      });
+    } catch {
+      // ignore
+    }
     invalidateCachedAnswerIndex();
     return { status: 'saved', submissionId: newId, lastSaved: now };
   }
@@ -244,6 +279,21 @@ export async function handleSaveFieldFromAssistant(
 
   sub.updatedAt = now;
   await repo.save(sub);
+  try {
+    const memoryRepo = createAnswerMemoryRepository();
+    await memoryRepo.save({
+      id: `${hostname.toLowerCase()}::${field.label.toLowerCase().trim()}`,
+      normalizedLabel: field.label.toLowerCase().trim(),
+      label: field.label,
+      fieldType: field.fieldType,
+      value: trimmedValue,
+      updatedAt: now,
+      hostname,
+      source: 'archived',
+    });
+  } catch {
+    // ignore
+  }
   invalidateCachedAnswerIndex();
   return { status: 'saved', submissionId: sub.id, lastSaved: now };
 }

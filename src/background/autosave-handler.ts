@@ -12,7 +12,11 @@ import { createDraftRepository, type DraftRepository } from '../storage/draft-re
 import type { SubmissionRepository } from '../storage/submission-repository';
 import { computeFormFingerprint } from '../matching/form-fingerprint';
 import { findFieldMatch } from '../matching/field-matcher';
-import { normalizeAnswerLabel } from '../assistant/answer-index';
+import { normalizeAnswerLabel, invalidateCachedAnswerIndex } from '../assistant/answer-index';
+import {
+  createAnswerMemoryRepository,
+  type AnswerMemoryRepository,
+} from '../storage/answer-memory-repository';
 
 export interface AutosaveFieldPayload {
   editingSessionId?: string;
@@ -23,6 +27,8 @@ export interface AutosaveFieldPayload {
   pageTitle: string;
   pageUrl: string;
   matchingSubmissionId?: string | null;
+  clientTimestamp?: number;
+  revision?: number;
   field: {
     label: string;
     value: string;
@@ -45,7 +51,38 @@ const SENSITIVE_PATTERNS =
 /**
  * Validates if a field candidate is sensitive and should never be autosaved.
  */
-export function isFieldSensitive(label: string, fieldType: string): boolean {
+export function isFieldSensitive(
+  labelOrElement: string | HTMLElement,
+  fieldType?: string,
+): boolean {
+  if (!labelOrElement) return false;
+  if (typeof labelOrElement !== 'string') {
+    const el = labelOrElement;
+    if (el instanceof HTMLInputElement) {
+      const type = (el.type || '').toLowerCase();
+      if (type === 'password' || type === 'file' || type === 'hidden') return true;
+      const ac = (el.autocomplete || '').toLowerCase();
+      if (
+        ac.includes('one-time-code') ||
+        ac.includes('current-password') ||
+        ac.includes('new-password') ||
+        ac.includes('cc-') ||
+        ac.includes('card')
+      ) {
+        return true;
+      }
+    }
+    const name = el.getAttribute('name') || '';
+    const id = el.id || '';
+    const ariaLabel = el.getAttribute('aria-label') || '';
+    const combined = `${name} ${id} ${ariaLabel}`;
+    return (
+      SENSITIVE_PATTERNS.test(combined) ||
+      SENSITIVE_PATTERNS.test(combined.replace(/[\s\-_]+/g, ''))
+    );
+  }
+
+  const label = labelOrElement;
   if ((fieldType || '').toLowerCase() === 'password') return true;
   if ((fieldType || '').toLowerCase() === 'file') return true;
   const cleanLabel = (label || '').replace(/[\s\-_]+/g, '');
@@ -57,7 +94,12 @@ export function isFieldSensitive(label: string, fieldType: string): boolean {
  * Resolves normalized origin from payload or URL.
  */
 function resolveOrigin(payload: AutosaveFieldPayload): string {
-  if (payload.origin && payload.origin.trim()) {
+  if (
+    payload.origin &&
+    payload.origin.trim() &&
+    payload.origin !== 'null' &&
+    !payload.origin.startsWith('null')
+  ) {
     return payload.origin.toLowerCase().trim().replace(/\/+$/, '');
   }
   try {
@@ -74,9 +116,17 @@ function resolveOrigin(payload: AutosaveFieldPayload): string {
 export async function handleAutosaveMessage(
   payload: AutosaveFieldPayload,
   customRepo?: DraftRepository | SubmissionRepository,
-  isIncognito?: boolean,
+  isIncognitoOrAnswerMemoryRepo?: boolean | AnswerMemoryRepository,
+  customAnswerMemoryRepo?: AnswerMemoryRepository,
 ): Promise<AutosaveResponse> {
   try {
+    const isIncognito =
+      typeof isIncognitoOrAnswerMemoryRepo === 'boolean' ? isIncognitoOrAnswerMemoryRepo : false;
+    const answerMemoryRepo =
+      typeof isIncognitoOrAnswerMemoryRepo !== 'boolean' && isIncognitoOrAnswerMemoryRepo
+        ? isIncognitoOrAnswerMemoryRepo
+        : customAnswerMemoryRepo;
+
     // 0. Authoritative private / incognito browsing guard
     if (isIncognito) {
       return { status: 'private_browsing_blocked' };
@@ -84,12 +134,23 @@ export async function handleAutosaveMessage(
 
     const {
       editingSessionId: _editingSessionId = 'session-default',
-      hostname,
+      hostname: rawHostname,
       pageTitle,
       pageUrl,
       field,
       allCurrentFields = [],
     } = payload;
+    const hostname =
+      rawHostname ||
+      (pageUrl
+        ? (() => {
+            try {
+              return new URL(pageUrl).hostname;
+            } catch {
+              return 'localhost';
+            }
+          })()
+        : 'localhost');
 
     // 1. Sensitive field safety guard
     if (isFieldSensitive(field.label, field.fieldType)) {
@@ -135,6 +196,8 @@ export async function handleAutosaveMessage(
         value: trimmedValue,
         fieldType: (field.fieldType as FieldType) || 'text',
         updatedAt: now,
+        revision: payload.revision,
+        clientTimestamp: payload.clientTimestamp,
       };
 
       const newDraft: FormDraft = {
@@ -154,6 +217,26 @@ export async function handleAutosaveMessage(
       };
 
       await draftRepo.save(newDraft);
+
+      // Persist to Answer Memory
+      try {
+        const memoryRepo = answerMemoryRepo || createAnswerMemoryRepository();
+        await memoryRepo.save({
+          id: `${hostname.toLowerCase()}::${normLabel}`,
+          normalizedLabel: normLabel,
+          label: field.label,
+          fieldType: field.fieldType,
+          value: trimmedValue,
+          updatedAt: now,
+          hostname,
+          formFingerprint,
+          source: 'draft',
+        });
+        invalidateCachedAnswerIndex();
+      } catch {
+        // Fallback for mock environments
+      }
+
       return {
         status: 'saved',
         draftId,
@@ -165,6 +248,28 @@ export async function handleAutosaveMessage(
     // Existing draft: check if field value changed
     const existingField = existingDraft.fields[normLabel];
     if (existingField) {
+      // Stale write rejection: if clientTimestamp or revision is older than existing, reject write
+      if (
+        payload.clientTimestamp &&
+        existingField.clientTimestamp &&
+        payload.clientTimestamp < existingField.clientTimestamp
+      ) {
+        return {
+          status: 'unchanged',
+          draftId: existingDraft.id,
+          submissionId: existingDraft.id,
+          lastSaved: existingDraft.updatedAt,
+        };
+      }
+      if (payload.revision && existingField.revision && payload.revision < existingField.revision) {
+        return {
+          status: 'unchanged',
+          draftId: existingDraft.id,
+          submissionId: existingDraft.id,
+          lastSaved: existingDraft.updatedAt,
+        };
+      }
+
       // Empty value does NOT erase historical draft answer
       if (trimmedValue === '') {
         return {
@@ -195,17 +300,41 @@ export async function handleAutosaveMessage(
       }
     }
 
-    // Update draft field
+    // Update draft field with newest revision/timestamp
     existingDraft.fields[normLabel] = {
       id: existingField?.id || generateId(),
       label: field.label,
       value: trimmedValue,
       fieldType: (field.fieldType as FieldType) || 'text',
       updatedAt: now,
+      revision: payload.revision ?? (existingField?.revision || 0) + 1,
+      clientTimestamp: payload.clientTimestamp ?? Date.now(),
     };
     existingDraft.updatedAt = now;
 
     await draftRepo.save(existingDraft);
+
+    // Persist to Answer Memory
+    if (trimmedValue !== '') {
+      try {
+        const memoryRepo = answerMemoryRepo || createAnswerMemoryRepository();
+        await memoryRepo.save({
+          id: `${hostname.toLowerCase()}::${normLabel}`,
+          normalizedLabel: normLabel,
+          label: field.label,
+          fieldType: field.fieldType,
+          value: trimmedValue,
+          updatedAt: now,
+          hostname,
+          formFingerprint,
+          source: 'draft',
+        });
+        invalidateCachedAnswerIndex();
+      } catch {
+        // Fallback for mock environments
+      }
+    }
+
     return {
       status: 'saved',
       draftId: existingDraft.id,

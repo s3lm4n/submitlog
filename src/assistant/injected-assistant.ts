@@ -1,9 +1,16 @@
 /**
  * Self-contained field-level SubmitLog assistant.
  * Injected into the page context using Shadow DOM isolation.
- * Provides contextual fill, save, and copy next to eligible form fields.
- * Bootstraps from extension-owned persistent AnswerIndex so indicators survive F5.
- * Never attaches to password, OTP, or sensitive fields.
+ * Provides a single-click contextual pencil control next to eligible form fields
+ * that have a saved answer in SubmitLog's Answer Memory.
+ *
+ * Requirements:
+ * 1. The pencil icon ONLY appears when a saved answer exists for that field/question.
+ * 2. Clicking the pencil ONCE immediately fills the latest saved answer.
+ * 3. No assistant menu is opened first.
+ * 4. Dispatches framework-compatible input and change events.
+ * 5. Briefly provides subtle visual success feedback (e.g. checkmark).
+ * 6. Never attaches to password, OTP, or sensitive fields.
  */
 
 export interface AssistantFieldStatus {
@@ -26,7 +33,6 @@ export function initFieldAssistant(): { success: boolean } {
 
   // Prevent multiple initializations
   if (window.__submitlog_assistant_active) {
-    // If already active, trigger a re-scan of the page
     if (typeof window.__submitlog_assistant_rescan === 'function') {
       window.__submitlog_assistant_rescan();
     }
@@ -189,13 +195,13 @@ export function initFieldAssistant(): { success: boolean } {
         border: 1px solid #d2d2d7;
         box-shadow: 0 1px 3px rgba(0,0,0,0.14);
         cursor: pointer;
-        transition: transform 0.15s ease, border-color 0.15s ease;
+        transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
         outline: none;
         user-select: none;
         padding: 0;
       }
       .assistant-trigger:hover, .assistant-trigger:focus-visible {
-        transform: scale(1.08);
+        transform: scale(1.1);
         border-color: #0066cc;
         box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.25);
       }
@@ -203,91 +209,13 @@ export function initFieldAssistant(): { success: boolean } {
         border-color: #34a853;
         background: #f0fdf4;
       }
-      .assistant-trigger.state-changed {
-        border-color: #ff9500;
-        background: #fffbf0;
-      }
       .trigger-icon {
         width: 12px;
         height: 12px;
-        color: #555555;
-      }
-      .state-saved .trigger-icon {
-        color: #2e7d32;
-      }
-      .state-changed .trigger-icon {
-        color: #b36b00;
-      }
-      .assistant-menu {
-        display: none;
-        position: absolute;
-        pointer-events: auto;
-        width: 220px;
-        background: #ffffff;
-        color: #1d1d1f;
-        border: 1px solid #d2d2d7;
-        border-radius: 8px;
-        box-shadow: 0 4px 16px rgba(0,0,0,0.18);
-        padding: 8px;
-        flex-direction: column;
-        gap: 4px;
-        font-size: 13px;
-      }
-      .assistant-menu.open {
-        display: flex;
-      }
-      .menu-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 4px 6px 6px 6px;
-        border-bottom: 1px solid rgba(0,0,0,0.08);
-        font-weight: 600;
-        font-size: 12px;
-      }
-      .menu-badge {
-        font-size: 10px;
-        padding: 2px 6px;
-        border-radius: 4px;
-        font-weight: 500;
-      }
-      .badge-available {
-        background: rgba(52, 168, 83, 0.15);
-        color: #2e7d32;
-      }
-      .badge-none {
-        background: rgba(142, 142, 147, 0.15);
-        color: #8e8e93;
-      }
-      .menu-item {
-        display: flex;
-        align-items: center;
-        width: 100%;
-        padding: 6px 8px;
-        border-radius: 6px;
-        border: none;
-        background: transparent;
-        color: inherit;
-        font-size: 12px;
-        text-align: left;
-        cursor: pointer;
-        outline: none;
-      }
-      .menu-item:hover, .menu-item:focus-visible {
-        background: rgba(0, 102, 204, 0.08);
         color: #0066cc;
       }
-      .menu-item-primary {
-        font-weight: 600;
-        color: #0066cc;
-      }
-      .menu-item-secondary {
-        color: #555555;
-      }
-      .copy-feedback {
-        font-size: 10px;
-        color: #34a853;
-        margin-left: auto;
+      .icon-success {
+        color: #2e7d32;
       }
       @media (prefers-color-scheme: dark) {
         .assistant-trigger {
@@ -295,31 +223,14 @@ export function initFieldAssistant(): { success: boolean } {
           border-color: #48484a;
         }
         .trigger-icon {
-          color: #d1d1d6;
+          color: #4da3ff;
         }
         .assistant-trigger.state-saved {
           background: #14331e;
           border-color: #34a853;
         }
-        .assistant-trigger.state-changed {
-          background: #3a2e12;
-          border-color: #ff9500;
-        }
-        .assistant-menu {
-          background: #1c1c1e;
-          color: #f5f5f7;
-          border-color: #3a3a3c;
-          box-shadow: 0 4px 16px rgba(0,0,0,0.4);
-        }
-        .menu-header {
-          border-bottom-color: rgba(255,255,255,0.1);
-        }
-        .menu-item-secondary {
-          color: #98989d;
-        }
-        .menu-item:hover, .menu-item:focus-visible {
-          background: rgba(77, 163, 255, 0.15);
-          color: #4da3ff;
+        .icon-success {
+          color: #4caf50;
         }
       }
     </style>
@@ -328,43 +239,43 @@ export function initFieldAssistant(): { success: boolean } {
         class="assistant-trigger"
         id="trigger"
         type="button"
-        aria-label="SubmitLog field assistant"
-        aria-haspopup="true"
-        aria-expanded="false"
+        aria-label="Fill saved answer with SubmitLog"
+        title="Fill saved answer"
       >
-        <svg class="trigger-icon" viewBox="0 0 16 16" fill="currentColor">
+        <svg class="trigger-icon icon-pencil" viewBox="0 0 16 16" fill="currentColor">
           <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z"/>
         </svg>
+        <svg class="trigger-icon icon-success" viewBox="0 0 16 16" fill="currentColor" style="display:none;">
+          <path d="M13.854 3.646a.5.5 0 0 1 0 .708l-7 7a.5.5 0 0 1-.708 0l-3.5-3.5a.5.5 0 1 1 .708-.708L6.5 10.293l6.646-6.647a.5.5 0 0 1 .708 0z"/>
+        </svg>
       </button>
-      <div class="assistant-menu" id="menu" role="menu">
-        <!-- Dynamically rendered items -->
-      </div>
     </div>
   `;
 
   const container = shadow.getElementById('container') as HTMLElement;
   const trigger = shadow.getElementById('trigger') as HTMLButtonElement;
-  const menu = shadow.getElementById('menu') as HTMLElement;
 
   let currentTargetEl: (HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement) | null = null;
   let currentSavedAnswer = '';
-  let hasOtherSaved = false;
-  let isMenuOpen = false;
 
-  // Cache of available answers from AnswerIndex
+  // Cache of available answers from Answer Memory / AnswerIndex
   const availableAnswersByNormLabel = new Map<string, AvailableAnswerInfo>();
 
   function updatePosition() {
     if (!currentTargetEl || !currentTargetEl.isConnected) {
       container.classList.remove('visible');
-      closeMenu();
+      return;
+    }
+
+    // Only show pencil if a saved answer exists
+    if (!currentSavedAnswer || !currentSavedAnswer.trim()) {
+      container.classList.remove('visible');
       return;
     }
 
     const rect = currentTargetEl.getBoundingClientRect();
     if (rect.width === 0 && rect.height === 0) {
       container.classList.remove('visible');
-      closeMenu();
       return;
     }
 
@@ -381,134 +292,38 @@ export function initFieldAssistant(): { success: boolean } {
 
     trigger.style.left = `${triggerLeft}px`;
     trigger.style.top = `${triggerTop}px`;
-
-    // Position menu
-    const menuTop = triggerTop + 26;
-    const menuLeft = Math.max(8, triggerLeft - 190);
-    menu.style.left = `${menuLeft}px`;
-    menu.style.top = `${menuTop}px`;
   }
 
-  function openMenu() {
-    isMenuOpen = true;
-    menu.classList.add('open');
-    trigger.setAttribute('aria-expanded', 'true');
-    renderMenuItems();
-    const firstItem = menu.querySelector('button') as HTMLElement | null;
-    if (firstItem) {
-      firstItem.focus();
-    }
-  }
-
-  function closeMenu() {
-    if (!isMenuOpen) return;
-    isMenuOpen = false;
-    menu.classList.remove('open');
-    trigger.setAttribute('aria-expanded', 'false');
-  }
-
-  function renderMenuItems() {
-    if (!currentTargetEl) return;
-    const val = getFieldValue(currentTargetEl).trim();
-    const hasSaved = Boolean(currentSavedAnswer && currentSavedAnswer.trim().length > 0);
-    const isDifferent = hasSaved && currentSavedAnswer.trim() !== val;
-
-    let html = `
-      <div class="menu-header">
-        <span>SubmitLog</span>
-        <span class="menu-badge ${hasSaved ? 'badge-available' : 'badge-none'}">
-          ${hasSaved ? '✓ Saved answer' : 'No saved answer'}
-        </span>
-      </div>
-    `;
-
-    if (hasSaved) {
-      html += `
-        <button class="menu-item menu-item-primary" id="btn-fill-field" role="menuitem" type="button">
-          Fill saved answer
-        </button>
-      `;
-      if (isDifferent && val) {
-        html += `
-          <button class="menu-item menu-item-primary" id="btn-update-field" role="menuitem" type="button">
-            Update saved answer
-          </button>
-        `;
-      }
-      html += `
-        <button class="menu-item menu-item-secondary" id="btn-copy-field" role="menuitem" type="button">
-          Copy saved answer <span class="copy-feedback" id="copy-status"></span>
-        </button>
-      `;
-    } else {
-      if (val) {
-        html += `
-          <button class="menu-item menu-item-primary" id="btn-save-field" role="menuitem" type="button">
-            Save this answer
-          </button>
-        `;
-      }
-    }
-
-    if (hasOtherSaved) {
-      html += `
-        <button class="menu-item menu-item-secondary" id="btn-fill-form" role="menuitem" type="button">
-          Fill entire form
-        </button>
-      `;
-    }
-
-    html += `
-      <button class="menu-item menu-item-secondary" id="btn-open-archive" role="menuitem" type="button">
-        Open Archive
-      </button>
-    `;
-
-    menu.innerHTML = html;
-
-    // Attach click listeners
-    const btnFill = menu.querySelector('#btn-fill-field') as HTMLButtonElement | null;
-    btnFill?.addEventListener('click', () => {
-      fillThisField();
-    });
-
-    const btnUpdate = menu.querySelector('#btn-update-field') as HTMLButtonElement | null;
-    btnUpdate?.addEventListener('click', () => {
-      saveThisField();
-    });
-
-    const btnSave = menu.querySelector('#btn-save-field') as HTMLButtonElement | null;
-    btnSave?.addEventListener('click', () => {
-      saveThisField();
-    });
-
-    const btnCopy = menu.querySelector('#btn-copy-field') as HTMLButtonElement | null;
-    btnCopy?.addEventListener('click', () => {
-      copySavedAnswer();
-    });
-
-    const btnFillForm = menu.querySelector('#btn-fill-form') as HTMLButtonElement | null;
-    btnFillForm?.addEventListener('click', () => {
-      fillEntireForm();
-    });
-
-    const btnArchive = menu.querySelector('#btn-open-archive') as HTMLButtonElement | null;
-    btnArchive?.addEventListener('click', () => {
-      openArchive();
-    });
-  }
-
+  /**
+   * One-click fill: immediately sets value, dispatches events, and provides brief visual feedback.
+   */
   function fillThisField() {
     if (!currentTargetEl || !currentSavedAnswer) return;
     window.__submitlog_suppress_autosave = true;
 
     if (currentTargetEl instanceof HTMLInputElement && currentTargetEl.type === 'checkbox') {
-      const shouldCheck = currentSavedAnswer.toLowerCase() === 'checked';
-      currentTargetEl.checked = shouldCheck;
-      currentTargetEl.dispatchEvent(new Event('input', { bubbles: true }));
-      currentTargetEl.dispatchEvent(new Event('change', { bubbles: true }));
+      const lower = currentSavedAnswer.toLowerCase().trim();
+      const shouldCheck = lower === 'checked' || lower === 'true' || lower === 'yes';
+      const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked');
+      if (desc && desc.set) {
+        desc.set.call(currentTargetEl, shouldCheck);
+      } else {
+        currentTargetEl.checked = shouldCheck;
+      }
+      currentTargetEl.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+      currentTargetEl.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+    } else if (currentTargetEl instanceof HTMLInputElement && currentTargetEl.type === 'radio') {
+      const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked');
+      if (desc && desc.set) {
+        desc.set.call(currentTargetEl, true);
+      } else {
+        currentTargetEl.checked = true;
+      }
+      currentTargetEl.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }));
+      currentTargetEl.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
     } else if (currentTargetEl instanceof HTMLSelectElement) {
       const targetVal = currentSavedAnswer.trim().toLowerCase();
+      let found = false;
       for (let i = 0; i < currentTargetEl.options.length; i++) {
         const opt = currentTargetEl.options[i];
         if (opt) {
@@ -516,12 +331,16 @@ export function initFieldAssistant(): { success: boolean } {
           const v = opt.value.trim().toLowerCase();
           if (t === targetVal || v === targetVal) {
             currentTargetEl.selectedIndex = i;
+            found = true;
             break;
           }
         }
       }
-      currentTargetEl.dispatchEvent(new Event('input', { bubbles: true }));
-      currentTargetEl.dispatchEvent(new Event('change', { bubbles: true }));
+      if (!found) {
+        currentTargetEl.value = currentSavedAnswer;
+      }
+      currentTargetEl.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+      currentTargetEl.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
     } else {
       const proto =
         currentTargetEl instanceof HTMLTextAreaElement
@@ -533,105 +352,28 @@ export function initFieldAssistant(): { success: boolean } {
       } else {
         currentTargetEl.value = currentSavedAnswer;
       }
-      currentTargetEl.dispatchEvent(new Event('input', { bubbles: true }));
-      currentTargetEl.dispatchEvent(new Event('change', { bubbles: true }));
+      currentTargetEl.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+      currentTargetEl.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
     }
 
-    updateTriggerVisualState();
-    closeMenu();
+    // Subtle visual feedback: temporarily display success checkmark
+    const iconPencil = shadow?.querySelector('.icon-pencil') as HTMLElement | null;
+    const iconSuccess = shadow?.querySelector('.icon-success') as HTMLElement | null;
+    if (iconPencil && iconSuccess) {
+      iconPencil.style.display = 'none';
+      iconSuccess.style.display = 'block';
+      trigger.classList.add('state-saved');
+      setTimeout(() => {
+        iconPencil.style.display = 'block';
+        iconSuccess.style.display = 'none';
+      }, 800);
+    }
+
     currentTargetEl.focus();
 
     setTimeout(() => {
       window.__submitlog_suppress_autosave = false;
     }, 500);
-  }
-
-  function saveThisField() {
-    if (!currentTargetEl) return;
-    const label = extractLabel(currentTargetEl);
-    const value = getFieldValue(currentTargetEl);
-    const fieldType =
-      currentTargetEl instanceof HTMLTextAreaElement
-        ? 'textarea'
-        : currentTargetEl instanceof HTMLSelectElement
-          ? 'select'
-          : (currentTargetEl as HTMLInputElement).type || 'text';
-
-    if (!value || value.trim() === '') {
-      closeMenu();
-      return;
-    }
-
-    sendMessageToBackground(
-      {
-        type: 'SUBMITLOG_SAVE_FIELD',
-        payload: {
-          hostname: window.location.hostname,
-          pageTitle: document.title,
-          pageUrl: window.location.href,
-          field: { label, fieldType, value: value.trim() },
-        },
-      },
-      () => {
-        currentSavedAnswer = value.trim();
-        const norm = normalize(label);
-        availableAnswersByNormLabel.set(norm, { value: value.trim(), fieldType, count: 1 });
-        updateTriggerVisualState();
-        closeMenu();
-        currentTargetEl?.focus();
-      },
-    );
-  }
-
-  function copySavedAnswer() {
-    if (!currentSavedAnswer) return;
-    try {
-      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-        navigator.clipboard.writeText(currentSavedAnswer);
-      }
-    } catch {
-      // ignore
-    }
-    const status = menu.querySelector('#copy-status');
-    if (status) {
-      status.textContent = '✓ Copied';
-      setTimeout(() => {
-        if (status) status.textContent = '';
-      }, 1500);
-    }
-  }
-
-  function fillEntireForm() {
-    sendMessageToBackground(
-      {
-        type: 'SUBMITLOG_TRIGGER_FILL_ALL',
-        payload: { hostname: window.location.hostname },
-      },
-      () => {
-        closeMenu();
-      },
-    );
-  }
-
-  function openArchive() {
-    sendMessageToBackground({
-      type: 'SUBMITLOG_OPEN_ARCHIVE',
-    });
-    closeMenu();
-  }
-
-  function updateTriggerVisualState() {
-    if (!currentTargetEl) return;
-    const currentVal = getFieldValue(currentTargetEl).trim();
-    trigger.classList.remove('state-saved', 'state-changed');
-
-    if (currentSavedAnswer && currentSavedAnswer.trim().length > 0) {
-      if (currentSavedAnswer.trim() === currentVal) {
-        trigger.classList.add('state-saved');
-      } else {
-        trigger.classList.add('state-changed');
-      }
-    }
   }
 
   function queryFieldStatus(el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement) {
@@ -647,10 +389,12 @@ export function initFieldAssistant(): { success: boolean } {
     // Fast path: check in-memory bootstrapped answers
     const norm = normalize(label);
     const cached = availableAnswersByNormLabel.get(norm);
-    if (cached) {
+    if (cached && cached.value.trim()) {
       currentSavedAnswer = cached.value;
-      hasOtherSaved = availableAnswersByNormLabel.size > 1;
-      updateTriggerVisualState();
+      updatePosition();
+    } else {
+      currentSavedAnswer = '';
+      container.classList.remove('visible');
     }
 
     sendMessageToBackground(
@@ -668,16 +412,19 @@ export function initFieldAssistant(): { success: boolean } {
             disarmFieldAssistant();
             return;
           }
-          currentSavedAnswer = resp.savedAnswer || '';
-          hasOtherSaved = Boolean(resp.hasOtherSavedAnswers);
-          if (currentSavedAnswer) {
+          const answer = resp.savedAnswer?.trim() || '';
+          if (answer) {
+            currentSavedAnswer = answer;
             availableAnswersByNormLabel.set(norm, {
-              value: currentSavedAnswer,
+              value: answer,
               fieldType,
               count: resp.totalSavedAnswers || 1,
             });
+            updatePosition();
+          } else if (!cached) {
+            currentSavedAnswer = '';
+            container.classList.remove('visible');
           }
-          updateTriggerVisualState();
         }
       },
     );
@@ -686,15 +433,40 @@ export function initFieldAssistant(): { success: boolean } {
   function sendMessageToBackground(msg: unknown, cb?: (res: unknown) => void) {
     try {
       const g = globalThis as unknown as {
-        browser?: { runtime?: { sendMessage?: (m: unknown, c?: (r: unknown) => void) => void } };
-        chrome?: { runtime?: { sendMessage?: (m: unknown, c?: (r: unknown) => void) => void } };
+        browser?: { runtime?: { sendMessage?: (m: unknown, c?: (r: unknown) => void) => unknown } };
+        chrome?: { runtime?: { sendMessage?: (m: unknown, c?: (r: unknown) => void) => unknown } };
       };
-      const runtime = g.browser?.runtime || g.chrome?.runtime || null;
+      const w = (typeof window !== 'undefined' ? window : {}) as unknown as {
+        browser?: { runtime?: { sendMessage?: (m: unknown, c?: (r: unknown) => void) => unknown } };
+        chrome?: { runtime?: { sendMessage?: (m: unknown, c?: (r: unknown) => void) => unknown } };
+      };
+      const runtime =
+        g.browser?.runtime || g.chrome?.runtime || w.browser?.runtime || w.chrome?.runtime || null;
       if (runtime && typeof runtime.sendMessage === 'function') {
-        runtime.sendMessage(msg, cb);
+        let callbackCalled = false;
+        const safeCb = (res: unknown) => {
+          if (callbackCalled) return;
+          callbackCalled = true;
+          if (cb) cb(res);
+        };
+        const ret = runtime.sendMessage(msg, (res: unknown) => {
+          try {
+            const _ = (runtime as unknown as { lastError?: unknown }).lastError;
+          } catch {
+            // ignore
+          }
+          safeCb(res);
+        });
+        if (ret && typeof (ret as Promise<unknown>).then === 'function') {
+          (ret as Promise<unknown>)
+            .then((res) => {
+              safeCb(res);
+            })
+            .catch(() => {});
+        }
       }
     } catch {
-      // ignore
+      // Context invalidated
     }
   }
 
@@ -717,18 +489,21 @@ export function initFieldAssistant(): { success: boolean } {
           }
           if (data.availableAnswers) {
             for (const [k, v] of Object.entries(data.availableAnswers)) {
-              availableAnswersByNormLabel.set(normalize(k), v);
+              if (v && v.value && v.value.trim()) {
+                availableAnswersByNormLabel.set(normalize(k), v);
+              }
             }
-            // If we currently have an active element, update its state
+            // If we currently have an active element, check if it now has an answer
             if (currentTargetEl) {
               const label = extractLabel(currentTargetEl);
               const matched = availableAnswersByNormLabel.get(normalize(label));
-              if (matched) {
+              if (matched && matched.value.trim()) {
                 currentSavedAnswer = matched.value;
-                updateTriggerVisualState();
+                updatePosition();
+              } else {
+                container.classList.remove('visible');
               }
             } else {
-              // On initial page load/reload: inspect eligible fields and attach to the first eligible field with answers if any
               attachToEligibleFieldWithAnswer();
             }
           }
@@ -737,9 +512,8 @@ export function initFieldAssistant(): { success: boolean } {
     );
   }
 
-  // Inspects fields and attaches assistant indicator to fields with saved answers
+  // Inspects fields and attaches pencil indicator to eligible field with saved answer
   function attachToEligibleFieldWithAnswer() {
-    if (currentTargetEl) return;
     const allInputs = document.querySelectorAll<
       HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
     >('input, textarea, select');
@@ -747,15 +521,17 @@ export function initFieldAssistant(): { success: boolean } {
       if (!isEligibleField(el)) continue;
       const label = extractLabel(el);
       const norm = normalize(label);
-      if (availableAnswersByNormLabel.has(norm)) {
+      const answer = availableAnswersByNormLabel.get(norm);
+      if (answer && answer.value.trim()) {
         currentTargetEl = el;
-        const answer = availableAnswersByNormLabel.get(norm);
-        currentSavedAnswer = answer?.value || '';
-        hasOtherSaved = availableAnswersByNormLabel.size > 1;
+        currentSavedAnswer = answer.value;
         updatePosition();
-        updateTriggerVisualState();
-        break;
+        return;
       }
+    }
+    // If no eligible field has an answer, hide
+    if (!currentTargetEl) {
+      container.classList.remove('visible');
     }
   }
 
@@ -764,13 +540,17 @@ export function initFieldAssistant(): { success: boolean } {
     const target = e.target as HTMLElement | null;
     if (isEligibleField(target)) {
       currentTargetEl = target;
-      updatePosition();
       queryFieldStatus(target);
     } else {
-      if (!shadow?.contains(target)) {
+      const isWithinAssistant =
+        target === trigger ||
+        (container && container.contains(target)) ||
+        (rootEl && rootEl.contains(target)) ||
+        (shadow && typeof shadow.contains === 'function' && shadow.contains(target));
+      if (!isWithinAssistant) {
         currentTargetEl = null;
+        currentSavedAnswer = '';
         container.classList.remove('visible');
-        closeMenu();
       }
     }
   }
@@ -778,26 +558,15 @@ export function initFieldAssistant(): { success: boolean } {
   function handleInput(e: Event) {
     const target = e.target as HTMLElement | null;
     if (target === currentTargetEl) {
-      updateTriggerVisualState();
       updatePosition();
     }
   }
 
-  function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape' && isMenuOpen) {
-      e.stopPropagation();
-      closeMenu();
-      currentTargetEl?.focus();
-    }
-  }
-
+  // Single left click immediately fills the field without opening a menu
   trigger.addEventListener('click', (e) => {
+    e.preventDefault();
     e.stopPropagation();
-    if (isMenuOpen) {
-      closeMenu();
-    } else {
-      openMenu();
-    }
+    fillThisField();
   });
 
   document.addEventListener('focusin', handleFocusIn, true);
@@ -805,22 +574,13 @@ export function initFieldAssistant(): { success: boolean } {
   document.addEventListener('change', handleInput, true);
   window.addEventListener('scroll', updatePosition, true);
   window.addEventListener('resize', updatePosition);
-  document.addEventListener('keydown', handleKeydown, true);
-
-  // Global click to close menu
-  const handleGlobalClick = (e: MouseEvent) => {
-    if (isMenuOpen && !shadow?.contains(e.target as Node)) {
-      closeMenu();
-    }
-  };
-  document.addEventListener('click', handleGlobalClick, true);
 
   // MutationObserver to detect newly inserted form fields (SPA workflows)
   let observerTimer: ReturnType<typeof setTimeout> | null = null;
   const observer = new MutationObserver(() => {
     if (observerTimer) clearTimeout(observerTimer);
     observerTimer = setTimeout(() => {
-      if (!currentTargetEl) {
+      if (!currentTargetEl || !currentTargetEl.isConnected) {
         attachToEligibleFieldWithAnswer();
       } else {
         updatePosition();
@@ -838,7 +598,7 @@ export function initFieldAssistant(): { success: boolean } {
   };
   window.addEventListener('popstate', handlePopState);
 
-  // Initial bootstrap from AnswerIndex
+  // Initial bootstrap from Answer Memory / AnswerIndex
   bootstrapFromAnswerIndex();
 
   window.__submitlog_assistant_rescan = () => {
@@ -854,8 +614,6 @@ export function initFieldAssistant(): { success: boolean } {
     document.removeEventListener('change', handleInput, true);
     window.removeEventListener('scroll', updatePosition, true);
     window.removeEventListener('resize', updatePosition);
-    document.removeEventListener('keydown', handleKeydown, true);
-    document.removeEventListener('click', handleGlobalClick, true);
     rootEl?.remove();
     window.__submitlog_assistant_active = false;
     window.__submitlog_assistant_rescan = undefined;

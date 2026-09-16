@@ -45,6 +45,7 @@ export function injectedArmAutosave(options: ArmAutosaveOptions): { success: boo
 
   window.__submitlog_autosave_active = true;
   window.__submitlog_autosave_session = options;
+  window.__submitlog_suppress_autosave = false;
 
   const SENSITIVE_AUTOCOMPLETE = [
     'current-password',
@@ -164,27 +165,47 @@ export function injectedArmAutosave(options: ArmAutosaveOptions): { success: boo
     );
   }
 
-  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  interface PendingFieldState {
+    label: string;
+    value: string;
+    fieldType: string;
+    dirty: boolean;
+    lastDispatchedValue: string;
+    timer: ReturnType<typeof setTimeout> | null;
+    clientTimestamp: number;
+    revision: number;
+  }
+
+  const pendingFields = new Map<string, PendingFieldState>();
   let safetyInterval: ReturnType<typeof setInterval> | null = null;
-  let pendingFieldPayload: { label: string; value: string; fieldType: string } | null = null;
-  const lastDispatchedValues = new Map<string, string>();
 
-  function flushPending() {
-    if (debounceTimer) {
-      clearTimeout(debounceTimer);
-      debounceTimer = null;
+  function getFieldKey(label: string, fieldType: string): string {
+    return `${label.toLowerCase().trim()}::${fieldType.toLowerCase().trim()}`;
+  }
+
+  function flushField(key: string) {
+    const fieldState = pendingFields.get(key);
+    if (!fieldState) return;
+
+    if (fieldState.timer) {
+      clearTimeout(fieldState.timer);
+      fieldState.timer = null;
     }
-    if (!pendingFieldPayload) return;
 
-    const payloadToSend = pendingFieldPayload;
-    const lastVal = lastDispatchedValues.get(payloadToSend.label);
-    if (lastVal === payloadToSend.value) {
-      pendingFieldPayload = null;
+    if (!fieldState.dirty && fieldState.lastDispatchedValue === fieldState.value) {
       return;
     }
 
-    lastDispatchedValues.set(payloadToSend.label, payloadToSend.value);
-    pendingFieldPayload = null;
+    const payloadToSend = {
+      label: fieldState.label,
+      value: fieldState.value,
+      fieldType: fieldState.fieldType,
+    };
+    const clientTimestamp = fieldState.clientTimestamp;
+    const revision = fieldState.revision;
+
+    fieldState.lastDispatchedValue = fieldState.value;
+    fieldState.dirty = false;
 
     try {
       const g = globalThis as unknown as {
@@ -196,12 +217,20 @@ export function injectedArmAutosave(options: ArmAutosaveOptions): { success: boo
         };
       };
       const runtime = g.browser?.runtime || g.chrome?.runtime || null;
-
       if (runtime && typeof runtime.sendMessage === 'function') {
-        const origin = options.origin || window.location.origin;
-        const pathname = options.pathname || window.location.pathname;
+        const pageOrigin = (() => {
+          try {
+            return new URL(options.pageUrl).origin;
+          } catch {
+            return window.location.origin && window.location.origin !== 'null'
+              ? window.location.origin
+              : `https://${options.hostname}`;
+          }
+        })();
+        const origin = options.origin || pageOrigin;
+        const pathname = options.pathname || window.location.pathname || '/';
 
-        runtime.sendMessage(
+        const promise: unknown = runtime.sendMessage(
           {
             type: 'SUBMITLOG_AUTOSAVE_FIELD',
             payload: {
@@ -213,11 +242,18 @@ export function injectedArmAutosave(options: ArmAutosaveOptions): { success: boo
               pageUrl: options.pageUrl,
               formFingerprint: options.formFingerprint,
               matchingSubmissionId: options.matchingSubmissionId,
+              clientTimestamp,
+              revision,
               field: payloadToSend,
               allCurrentFields: options.initialFields,
             },
           },
           (res: unknown) => {
+            try {
+              const _err = (runtime as unknown as { lastError?: unknown }).lastError;
+            } catch {
+              // ignore
+            }
             if (
               res &&
               typeof res === 'object' &&
@@ -231,15 +267,24 @@ export function injectedArmAutosave(options: ArmAutosaveOptions): { success: boo
             }
           },
         );
+        if (promise && typeof (promise as { catch?: unknown }).catch === 'function') {
+          (promise as Promise<unknown>).catch(() => {});
+        }
       }
     } catch {
       // Ignore background communication failures
     }
   }
 
-  window.__submitlog_autosave_flush = flushPending;
+  function flushAllFields() {
+    for (const key of pendingFields.keys()) {
+      flushField(key);
+    }
+  }
 
-  function processElementChange(target: HTMLElement, delayMs = 100) {
+  window.__submitlog_autosave_flush = flushAllFields;
+
+  function processElementChange(target: HTMLElement, delayMs = 300, immediate = false) {
     if (window.__submitlog_suppress_autosave) return;
     if (isSensitive(target)) return;
 
@@ -315,20 +360,35 @@ export function injectedArmAutosave(options: ArmAutosaveOptions): { success: boo
 
     if (!label.trim()) return;
 
-    pendingFieldPayload = {
-      label: label.trim(),
-      value: value.trim(),
-      fieldType,
-    };
+    const key = getFieldKey(label, fieldType);
+    let state = pendingFields.get(key);
+    if (!state) {
+      state = {
+        label: label.trim(),
+        value: value.trim(),
+        fieldType,
+        dirty: false,
+        lastDispatchedValue: '',
+        timer: null,
+        clientTimestamp: Date.now(),
+        revision: 0,
+      };
+      pendingFields.set(key, state);
+    }
 
-    if (delayMs <= 0) {
-      flushPending();
+    state.value = value.trim();
+    state.dirty = true;
+    state.clientTimestamp = Date.now();
+    state.revision++;
+
+    if (immediate || delayMs <= 0) {
+      flushField(key);
     } else {
-      if (debounceTimer) {
-        clearTimeout(debounceTimer);
+      if (state.timer) {
+        clearTimeout(state.timer);
       }
-      debounceTimer = setTimeout(() => {
-        flushPending();
+      state.timer = setTimeout(() => {
+        flushField(key);
       }, delayMs);
     }
   }
@@ -343,8 +403,8 @@ export function injectedArmAutosave(options: ArmAutosaveOptions): { success: boo
         target.getAttribute('role') === 'textbox' ||
         target.isContentEditable)
     ) {
-      // Debounced write: 100ms after last keystroke
-      processElementChange(target, 100);
+      // Debounced write per field: 300ms after keystroke
+      processElementChange(target, 300, false);
     }
   };
 
@@ -357,16 +417,16 @@ export function injectedArmAutosave(options: ArmAutosaveOptions): { success: boo
         target.getAttribute('role') === 'textbox' ||
         target.isContentEditable)
     ) {
-      // Prompt flush on blur / focusout: 100ms
-      processElementChange(target, 100);
+      // Immediate finalization on blur/focusout: no debounce delay
+      processElementChange(target, 0, true);
     }
   };
 
   const handleChange = (e: Event) => {
     const target = e.target as HTMLElement | null;
     if (target && (target instanceof HTMLSelectElement || target instanceof HTMLInputElement)) {
-      // Prompt flush on change: 50ms
-      processElementChange(target, 50);
+      // Immediate flush on change
+      processElementChange(target, 0, true);
     }
   };
 
@@ -374,29 +434,27 @@ export function injectedArmAutosave(options: ArmAutosaveOptions): { success: boo
     const target = e.target as HTMLElement | null;
     const radioOrCheckbox = target?.closest<HTMLElement>('[role="radio"], [role="checkbox"]');
     if (radioOrCheckbox) {
-      setTimeout(() => processElementChange(radioOrCheckbox, 0), 50);
+      setTimeout(() => processElementChange(radioOrCheckbox, 0, true), 0);
     }
   };
 
   const handleSubmit = () => {
-    flushPending();
+    flushAllFields();
   };
 
   const handleVisibilityChange = () => {
     if (document.visibilityState === 'hidden') {
-      flushPending();
+      flushAllFields();
     }
   };
 
   const handlePageHide = () => {
-    flushPending();
+    flushAllFields();
   };
 
   // Periodic safety flush every 2.5s when dirty
   safetyInterval = setInterval(() => {
-    if (pendingFieldPayload) {
-      flushPending();
-    }
+    flushAllFields();
   }, 2500);
 
   document.addEventListener('input', handleInputEvent, true);
@@ -416,16 +474,17 @@ export function injectedArmAutosave(options: ArmAutosaveOptions): { success: boo
     document.removeEventListener('visibilitychange', handleVisibilityChange, true);
     window.removeEventListener('pagehide', handlePageHide, true);
 
-    if (debounceTimer) {
-      clearTimeout(debounceTimer);
-      debounceTimer = null;
+    for (const state of pendingFields.values()) {
+      if (state.timer) {
+        clearTimeout(state.timer);
+      }
     }
+    pendingFields.clear();
+
     if (safetyInterval) {
       clearInterval(safetyInterval);
       safetyInterval = null;
     }
-    pendingFieldPayload = null;
-    lastDispatchedValues.clear();
     window.__submitlog_autosave_active = false;
   };
 
@@ -443,6 +502,7 @@ export function injectedDisarmAutosave(): { success: boolean } {
     window.__submitlog_autosave_cleanup();
   }
   window.__submitlog_autosave_active = false;
+  window.__submitlog_suppress_autosave = false;
   return { success: true };
 }
 

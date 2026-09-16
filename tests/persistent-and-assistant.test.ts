@@ -544,12 +544,33 @@ describe('Field Assistant Verification (Contextual Suggestions & Q&A)', () => {
   });
 
   // --------------------------------------------------------------------------
-  // 22. Escape key closes field menu and returns focus cleanly
+  // 22. Pencil click executes one-click fill immediately and shows visual feedback
   // --------------------------------------------------------------------------
-  it('22. Escape key closes field menu and returns focus cleanly', () => {
+  it('22. Pencil click executes one-click fill immediately and shows visual feedback', () => {
+    const mockHandler = vi.fn((msg: unknown, cb?: (res: unknown) => void) => {
+      const m = msg as { type: string };
+      if (m.type === 'SUBMITLOG_GET_FIELD_STATUS') {
+        const res = {
+          hasSavedAnswer: true,
+          savedAnswer: 'Alice Johnson',
+          totalSavedAnswers: 1,
+        };
+        if (cb) cb(res);
+        return Promise.resolve(res);
+      }
+      if (cb) cb({});
+      return Promise.resolve({});
+    });
+
+    sendMessageSpy.mockImplementation(mockHandler);
+    const mockObj = { runtime: { sendMessage: mockHandler } };
+    (window as unknown as { browser: unknown }).browser = mockObj;
+    (globalThis as unknown as { browser: unknown; chrome: unknown }).browser = mockObj;
+    (globalThis as unknown as { browser: unknown; chrome: unknown }).chrome = mockObj;
+
     const input = document.createElement('input');
     input.id = 'test-esc';
-    input.setAttribute('aria-label', 'Escape Test');
+    input.setAttribute('aria-label', 'Full Name');
     document.body.appendChild(input);
 
     initFieldAssistant();
@@ -559,19 +580,12 @@ describe('Field Assistant Verification (Contextual Suggestions & Q&A)', () => {
     const root = document.getElementById('submitlog-assistant-root');
     const shadow = root?.shadowRoot;
     const trigger = shadow?.getElementById('trigger') as HTMLButtonElement;
-    const menu = shadow?.getElementById('menu') as HTMLElement;
 
-    // Open menu
+    // Single click directly fills the field without opening a menu
     trigger.click();
-    expect(trigger.getAttribute('aria-expanded')).toBe('true');
-    expect(menu.classList.contains('open')).toBe(true);
 
-    // Dispatch Escape keydown
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-
-    // Menu must be closed and aria-expanded reset
-    expect(trigger.getAttribute('aria-expanded')).toBe('false');
-    expect(menu.classList.contains('open')).toBe(false);
+    expect(input.value).toBe('Alice Johnson');
+    expect(trigger.classList.contains('state-saved')).toBe(true);
   });
 
   // --------------------------------------------------------------------------

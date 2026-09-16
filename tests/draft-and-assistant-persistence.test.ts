@@ -144,6 +144,11 @@ function createInMemoryDraftRepo(): DraftRepository {
       }
       return all.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
     },
+    async getAll(): Promise<FormDraft[]> {
+      return Array.from(store.values())
+        .map((d) => JSON.parse(JSON.stringify(d)))
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    },
     async delete(id: string): Promise<void> {
       store.delete(id);
     },
@@ -271,13 +276,12 @@ describe('USABILITY & PERSISTENCE ENGINE (Sections A through I)', () => {
       select.selectedIndex = 1;
       select.dispatchEvent(new Event('change', { bubbles: true }));
 
-      expect(messages).toHaveLength(0);
-      vi.advanceTimersByTime(60);
+      // Promptly flushed on change
       expect(messages).toHaveLength(1);
       expect(messages[0]?.payload.field.value).toBe('Option B');
     });
 
-    it('flushes on blur / focusout event promptly (100ms)', () => {
+    it('flushes on blur / focusout event immediately without delay', () => {
       const messages = setupMockChrome();
 
       document.body.innerHTML = `
@@ -298,8 +302,7 @@ describe('USABILITY & PERSISTENCE ENGINE (Sections A through I)', () => {
       const input = document.getElementById('name') as HTMLInputElement;
       input.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
 
-      expect(messages).toHaveLength(0);
-      vi.advanceTimersByTime(120);
+      // Immediate finalization on blur: 0ms delay, no 100ms lag
       expect(messages).toHaveLength(1);
       expect(messages[0]?.payload.field.value).toBe('Ada');
     });

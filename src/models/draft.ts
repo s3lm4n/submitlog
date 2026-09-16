@@ -8,6 +8,8 @@ export interface DraftField {
   value: string;
   fieldType: FieldType;
   updatedAt: string; // ISO 8601
+  revision?: number;
+  clientTimestamp?: number;
 }
 
 export interface FormDraft {

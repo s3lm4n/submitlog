@@ -2,10 +2,13 @@ import { openDB, type IDBPDatabase, type DBSchema } from 'idb';
 import type { Submission } from '../models/submission';
 import type { FormDraft } from '../models/draft';
 
+import type { AnswerMemoryEntry } from './answer-memory-repository';
+
 const DB_NAME = 'submitlog';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const STORE_SUBMISSIONS = 'submissions';
 const STORE_DRAFTS = 'drafts';
+const STORE_ANSWERS = 'answer_memory';
 
 export interface SubmitLogDB extends DBSchema {
   submissions: {
@@ -22,6 +25,15 @@ export interface SubmitLogDB extends DBSchema {
     value: FormDraft;
     indexes: {
       'by-origin': string;
+      'by-hostname': string;
+      'by-updated': string;
+    };
+  };
+  answer_memory: {
+    key: string;
+    value: AnswerMemoryEntry;
+    indexes: {
+      'by-label': string;
       'by-hostname': string;
       'by-updated': string;
     };
@@ -52,6 +64,13 @@ export async function getDB(): Promise<IDBPDatabase<SubmitLogDB>> {
           draftStore.createIndex('by-origin', 'origin');
           draftStore.createIndex('by-hostname', 'hostname');
           draftStore.createIndex('by-updated', 'updatedAt');
+        }
+
+        if (!db.objectStoreNames.contains(STORE_ANSWERS)) {
+          const answerStore = db.createObjectStore(STORE_ANSWERS, { keyPath: 'id' });
+          answerStore.createIndex('by-label', 'normalizedLabel');
+          answerStore.createIndex('by-hostname', 'hostname');
+          answerStore.createIndex('by-updated', 'updatedAt');
         }
       },
     });

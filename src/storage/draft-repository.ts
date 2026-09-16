@@ -13,6 +13,7 @@ export interface DraftRepository {
     formFingerprint: string,
   ): Promise<FormDraft | undefined>;
   getByOrigin(origin: string): Promise<FormDraft[]>;
+  getAll(): Promise<FormDraft[]>;
   delete(id: string): Promise<void>;
   deleteByOrigin(origin: string): Promise<void>;
   cleanupExpired(maxAgeMs?: number): Promise<number>;
@@ -20,6 +21,11 @@ export interface DraftRepository {
 
 export function createDraftRepository(): DraftRepository {
   return {
+    async getAll(): Promise<FormDraft[]> {
+      const db = await getDB();
+      const all = await db.getAll('drafts');
+      return all.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    },
     async save(draft: FormDraft): Promise<void> {
       const db = await getDB();
       const readyToSave: FormDraft = {

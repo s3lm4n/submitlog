@@ -1,0 +1,78 @@
+<!-- 
+  Title: Tally Style Application Fixture
+  Purpose: Generic representation of dynamic, block-based / React SPA forms (e.g. Tally-like)
+           with placeholder-driven labels, dynamic blocks, and no native form tag.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Startup Accelerator Application - Tally Flow</title>
+  </head>
+  <body>
+    <div id="app" class="tally-form-wrapper">
+      <div class="tally-page-header">
+        <h1>Global Seed Fund 2026</h1>
+        <p>Complete this form to apply for our winter cohort.</p>
+      </div>
+
+      <div class="tally-blocks" id="blocks-container">
+        <!-- Question Block 1: First Name -->
+        <div class="tally-block" data-block-id="blk_fn" id="blk-fn">
+          <div class="tally-block-title">First Name</div>
+          <input
+            id="tally_first_name"
+            type="text"
+            class="tally-field"
+            placeholder="First Name"
+            aria-label="First Name"
+            value=""
+          />
+        </div>
+
+        <!-- Question Block 2: Last Name -->
+        <div class="tally-block" data-block-id="blk_ln" id="blk-ln">
+          <div class="tally-block-title">Last Name</div>
+          <input
+            id="tally_last_name"
+            type="text"
+            class="tally-field"
+            placeholder="Last Name"
+            aria-label="Last Name"
+            value=""
+          />
+        </div>
+
+        <!-- Question Block 3: Startup Pitch (Textarea) -->
+        <div class="tally-block" data-block-id="blk_pitch" id="blk-pitch">
+          <div class="tally-block-title">What problem does your startup solve?</div>
+          <textarea
+            id="tally_pitch"
+            class="tally-field"
+            placeholder="What problem does your startup solve?"
+            aria-label="What problem does your startup solve?"
+          ></textarea>
+        </div>
+
+        <!-- Question Block 4: Stage Selection -->
+        <div class="tally-block" data-block-id="blk_stage" id="blk-stage">
+          <div class="tally-block-title">Current Stage</div>
+          <select id="tally_stage" class="tally-field" aria-label="Current Stage">
+            <option value="">Select your stage...</option>
+            <option value="Idea">Idea</option>
+            <option value="Prototype">Prototype</option>
+            <option value="Revenue">Revenue</option>
+            <option value="Growth">Growth</option>
+          </select>
+        </div>
+
+        <!-- Action button -->
+        <div class="tally-block tally-actions" data-block-id="blk_actions">
+          <button type="button" class="tally-submit-button" id="tally-submit">
+            Submit Application
+          </button>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

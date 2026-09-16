@@ -131,10 +131,7 @@ describe('Privacy-Preserving Field-Level Autosave', () => {
       const input = document.getElementById('fullName') as HTMLInputElement;
       input.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
 
-      expect(messages).toHaveLength(0); // Debounced 300ms
-
-      vi.advanceTimersByTime(350);
-
+      // Immediate flush on focusout (0ms delay)
       expect(messages).toHaveLength(1);
       expect(messages[0]?.type).toBe('SUBMITLOG_AUTOSAVE_FIELD');
       expect(messages[0]?.payload.field).toEqual({
@@ -792,9 +789,9 @@ describe('Privacy-Preserving Field-Level Autosave', () => {
       });
 
       const input = document.getElementById('answer') as HTMLInputElement;
-      input.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+      input.dispatchEvent(new Event('input', { bubbles: true }));
 
-      // Before timer expires (0ms), submit is triggered
+      // Before timer expires (debounced 300ms), submit is triggered
       expect(messages).toHaveLength(0);
 
       const form = document.getElementById('testForm') as HTMLFormElement;

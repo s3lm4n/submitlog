@@ -115,6 +115,11 @@ function createInMemoryDraftRepo(): DraftRepository {
       }
       return all.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
     },
+    async getAll(): Promise<FormDraft[]> {
+      return Array.from(store.values())
+        .map((d) => JSON.parse(JSON.stringify(d)))
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    },
     async delete(id: string): Promise<void> {
       store.delete(id);
     },
@@ -261,8 +266,8 @@ describe('AUTOMATIC AUTOSAVE UX & LAST-WRITE-WINS (Requirements A through L)', (
     input.value = 'DeepMind Applied';
     input.dispatchEvent(new Event('input', { bubbles: true }));
 
-    // Advance by 100ms debounce
-    vi.advanceTimersByTime(120);
+    // Advance by 300ms debounce
+    vi.advanceTimersByTime(350);
 
     expect(messages).toHaveLength(1);
     const payload = messages[0]!.payload;
@@ -389,12 +394,12 @@ describe('AUTOMATIC AUTOSAVE UX & LAST-WRITE-WINS (Requirements A through L)', (
     input.value = 'Autosave Protocol';
     input.dispatchEvent(new Event('input', { bubbles: true }));
 
-    // 40ms after last keystroke, still debouncing
+    // 40ms after last keystroke, still debouncing (< 300ms)
     vi.advanceTimersByTime(40);
     expect(messages).toHaveLength(0);
 
-    // After 100ms elapses from the last keystroke (70ms more):
-    vi.advanceTimersByTime(70);
+    // After 300ms debounce elapses from the last keystroke (270ms more):
+    vi.advanceTimersByTime(270);
 
     // Exactly 1 message dispatched containing the final converged value
     expect(messages).toHaveLength(1);

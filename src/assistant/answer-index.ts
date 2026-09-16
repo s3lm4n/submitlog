@@ -1,5 +1,6 @@
 import type { Submission } from '../models/submission';
 import type { SubmissionRepository } from '../storage/submission-repository';
+import type { AnswerMemoryRepository } from '../storage/answer-memory-repository';
 
 export interface IndexedAnswer {
   label: string;
@@ -59,6 +60,38 @@ export class AnswerIndex {
         });
         this.entries.set(norm, list);
       }
+    }
+  }
+
+  /**
+   * Adds Answer Memory entries (from finalized drafts and explicit submissions) into the index.
+   */
+  public addAnswerMemoryEntries(
+    entries: Array<{
+      id: string;
+      label: string;
+      normalizedLabel?: string;
+      value: string;
+      fieldType: string;
+      hostname?: string;
+      updatedAt?: string;
+    }>,
+  ): void {
+    for (const entry of entries) {
+      if (!entry.value || !entry.value.trim()) continue;
+      const norm = normalizeAnswerLabel(entry.label || entry.normalizedLabel || '');
+      if (!norm) continue;
+
+      const list = this.entries.get(norm) || [];
+      list.push({
+        label: entry.label,
+        value: entry.value.trim(),
+        fieldType: entry.fieldType,
+        hostname: entry.hostname || '',
+        submissionId: entry.id,
+        updatedAt: entry.updatedAt || new Date().toISOString(),
+      });
+      this.entries.set(norm, list);
     }
   }
 
@@ -152,15 +185,27 @@ export class AnswerIndex {
 let cachedIndex: AnswerIndex | null = null;
 
 /**
- * Builds or refreshes the global in-memory AnswerIndex from SubmissionRepository.
+ * Builds or refreshes the global in-memory AnswerIndex from SubmissionRepository and AnswerMemoryRepository.
  */
 export async function getOrBuildAnswerIndex(
   customRepo?: SubmissionRepository,
+  customMemoryRepo?: AnswerMemoryRepository,
 ): Promise<AnswerIndex> {
   const { createSubmissionRepository } = await import('../storage/submission-repository');
   const repo = customRepo || createSubmissionRepository();
   const subs = await repo.getAll();
-  cachedIndex = new AnswerIndex(subs);
+  const index = new AnswerIndex(subs);
+
+  try {
+    const { createAnswerMemoryRepository } = await import('../storage/answer-memory-repository');
+    const memoryRepo = customMemoryRepo || createAnswerMemoryRepository();
+    const memories = await memoryRepo.getAll();
+    index.addAnswerMemoryEntries(memories);
+  } catch {
+    // Fallback in mock environments
+  }
+
+  cachedIndex = index;
   return cachedIndex;
 }
 

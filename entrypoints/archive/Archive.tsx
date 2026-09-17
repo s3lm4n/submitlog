@@ -6,9 +6,9 @@ import { createDraftRepository, consolidateDrafts } from '../../src/storage/draf
 import { exportAllAsJson, downloadFile } from '../../src/export/exporter';
 import { SubmissionDetail } from './SubmissionDetail';
 import { DraftDetail } from './DraftDetail';
+import { DraftCard, SubmissionCard } from './ArchiveCard';
 
 import { Button } from '@/components/ui/button';
-import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -22,7 +22,7 @@ import {
   AlertDialogAction,
   AlertDialogCancel,
 } from '@/components/ui/alert-dialog';
-import { Search, Download, Trash2, Clock, Layers, FolderArchive, FileEdit } from 'lucide-react';
+import { Search, Download, FolderArchive } from 'lucide-react';
 
 import './archive.css';
 
@@ -210,7 +210,7 @@ export function Archive() {
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
       {/* Header */}
-      <header className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur-xs">
+      <header className="sticky top-0 z-10 border-b border-border/70 bg-background/95 backdrop-blur-xs">
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between gap-4">
           <div className="flex items-center gap-2.5">
             <FolderArchive className="size-5 text-primary" />
@@ -227,7 +227,7 @@ export function Archive() {
                 placeholder="Search drafts and submissions..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-8 h-9 text-xs"
+                className="pl-8 h-9 text-xs bg-secondary/40 border-border/70 focus:bg-background transition-colors"
               />
             </div>
 
@@ -235,7 +235,7 @@ export function Archive() {
               <Button
                 variant="outline"
                 size="sm"
-                className="h-9 gap-1.5 text-xs shrink-0"
+                className="h-9 gap-1.5 text-xs shrink-0 border-border/70 shadow-xs"
                 onClick={() => {
                   const json = exportAllAsJson(submissions);
                   downloadFile(json, 'submitlog_archive.json', 'application/json');
@@ -252,13 +252,13 @@ export function Archive() {
       {/* Main Content */}
       <main className="flex-1 max-w-6xl w-full mx-auto px-6 py-8">
         {loading ? (
-          <div className="space-y-8">
-            <div className="space-y-3">
-              <Skeleton className="h-6 w-40" />
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                <Skeleton className="h-44 rounded-lg" />
-                <Skeleton className="h-44 rounded-lg" />
-                <Skeleton className="h-44 rounded-lg" />
+          <div className="space-y-10">
+            <div className="space-y-4">
+              <Skeleton className="h-6 w-44 rounded-md" />
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                <Skeleton className="h-52 rounded-xl" />
+                <Skeleton className="h-52 rounded-xl" />
+                <Skeleton className="h-52 rounded-xl" />
               </div>
             </div>
           </div>
@@ -294,93 +294,33 @@ export function Archive() {
             {/* Section 1: In Progress (Drafts) */}
             {filteredDrafts.length > 0 && (
               <section className="space-y-4">
-                <div className="flex items-baseline justify-between border-b pb-2">
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-sm font-semibold tracking-tight text-foreground uppercase tracking-wider text-xs">
+                <div className="flex items-baseline justify-between border-b border-border/60 pb-2.5">
+                  <div className="flex items-center gap-2.5">
+                    <h2 className="text-xs font-semibold tracking-wider uppercase text-foreground">
                       In progress
                     </h2>
-                    <Badge variant="draft" className="text-[11px] h-5 px-1.5 font-normal">
+                    <Badge variant="draft" className="text-[11px] h-5 px-2 font-medium">
                       {filteredDrafts.length}
                     </Badge>
                   </div>
-                  <span className="text-xs text-muted-foreground">Active autosaved drafts</span>
+                  <span className="text-xs text-muted-foreground/80">Active autosaved drafts</span>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {filteredDrafts.map((draft) => {
-                    const fieldsCount = Object.keys(draft.fields || {}).length;
-                    return (
-                      <Card
-                        key={draft.id}
-                        className="group flex flex-col justify-between hover:border-primary/50 transition-colors cursor-pointer"
-                        onClick={() => setSelectedDraftId(draft.id)}
-                      >
-                        <CardHeader className="p-4 pb-2 space-y-1.5">
-                          <div className="flex items-start justify-between gap-2">
-                            <CardTitle className="text-sm font-semibold line-clamp-1 group-hover:text-primary transition-colors">
-                              {draft.pageTitle || draft.hostname}
-                            </CardTitle>
-                            <Badge variant="draft" className="shrink-0 text-[10px] h-4.5">
-                              Draft
-                            </Badge>
-                          </div>
-                          <p className="text-xs text-muted-foreground font-mono truncate">
-                            {draft.hostname}
-                          </p>
-                        </CardHeader>
-
-                        <CardContent className="p-4 pt-1 space-y-2 text-xs text-muted-foreground flex-1">
-                          <div className="flex items-center gap-1.5 text-xs">
-                            <Clock className="size-3.5 shrink-0" />
-                            <span>
-                              Saved{' '}
-                              {new Date(draft.updatedAt).toLocaleTimeString([], {
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              })}{' '}
-                              ({new Date(draft.updatedAt).toLocaleDateString()})
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-1.5 text-xs">
-                            <FileEdit className="size-3.5 shrink-0" />
-                            <span>
-                              {fieldsCount} saved {fieldsCount === 1 ? 'answer' : 'answers'}
-                            </span>
-                          </div>
-                        </CardContent>
-
-                        <CardFooter className="p-3 pt-0 flex items-center justify-between gap-2 border-t mt-3">
-                          <Button
-                            variant="default"
-                            size="sm"
-                            className="h-7 text-xs flex-1"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedDraftId(draft.id);
-                            }}
-                          >
-                            View Draft
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setDeleteTarget({
-                                type: 'draft',
-                                id: draft.id,
-                                title: draft.pageTitle || draft.hostname,
-                              });
-                            }}
-                            title="Delete draft"
-                          >
-                            <Trash2 className="size-3.5" />
-                          </Button>
-                        </CardFooter>
-                      </Card>
-                    );
-                  })}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                  {filteredDrafts.map((draft) => (
+                    <DraftCard
+                      key={draft.id}
+                      draft={draft}
+                      onSelect={() => setSelectedDraftId(draft.id)}
+                      onDelete={() => {
+                        setDeleteTarget({
+                          type: 'draft',
+                          id: draft.id,
+                          title: draft.pageTitle || draft.hostname,
+                        });
+                      }}
+                    />
+                  ))}
                 </div>
               </section>
             )}
@@ -388,91 +328,34 @@ export function Archive() {
             {/* Section 2: Saved Submissions */}
             {filteredSubmissions.length > 0 && (
               <section className="space-y-4">
-                <div className="flex items-baseline justify-between border-b pb-2">
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-sm font-semibold tracking-tight text-foreground uppercase tracking-wider text-xs">
+                <div className="flex items-baseline justify-between border-b border-border/60 pb-2.5">
+                  <div className="flex items-center gap-2.5">
+                    <h2 className="text-xs font-semibold tracking-wider uppercase text-foreground">
                       Saved submissions
                     </h2>
-                    <Badge variant="saved" className="text-[11px] h-5 px-1.5 font-normal">
+                    <Badge variant="saved" className="text-[11px] h-5 px-2 font-medium">
                       {filteredSubmissions.length}
                     </Badge>
                   </div>
-                  <span className="text-xs text-muted-foreground">
+                  <span className="text-xs text-muted-foreground/80">
                     Explicitly archived snapshots
                   </span>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                   {filteredSubmissions.map((sub) => (
-                    <Card
+                    <SubmissionCard
                       key={sub.id}
-                      className="group flex flex-col justify-between hover:border-primary/50 transition-colors cursor-pointer"
-                      onClick={() => setSelectedSubmissionId(sub.id)}
-                    >
-                      <CardHeader className="p-4 pb-2 space-y-1.5">
-                        <div className="flex items-start justify-between gap-2">
-                          <CardTitle className="text-sm font-semibold line-clamp-1 group-hover:text-primary transition-colors">
-                            {sub.submissionTitle}
-                          </CardTitle>
-                          <Badge variant="saved" className="shrink-0 text-[10px] h-4.5">
-                            Saved
-                          </Badge>
-                        </div>
-                        <p className="text-xs text-muted-foreground font-mono truncate">
-                          {sub.hostname}
-                        </p>
-                      </CardHeader>
-
-                      <CardContent className="p-4 pt-1 space-y-2 text-xs text-muted-foreground flex-1">
-                        <div className="flex items-center gap-1.5 text-xs">
-                          <Clock className="size-3.5 shrink-0" />
-                          <span>
-                            Updated {new Date(sub.updatedAt || sub.createdAt).toLocaleDateString()}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-3 text-xs">
-                          <span className="flex items-center gap-1">
-                            <Layers className="size-3.5 shrink-0" />
-                            {sub.revisions?.length || 1}{' '}
-                            {(sub.revisions?.length || 1) === 1 ? 'rev' : 'revs'}
-                          </span>
-                          <span>·</span>
-                          <span>
-                            {sub.fields.length} {sub.fields.length === 1 ? 'answer' : 'answers'}
-                          </span>
-                        </div>
-                      </CardContent>
-
-                      <CardFooter className="p-3 pt-0 flex items-center justify-between gap-2 border-t mt-3">
-                        <Button
-                          variant="default"
-                          size="sm"
-                          className="h-7 text-xs flex-1"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedSubmissionId(sub.id);
-                          }}
-                        >
-                          View Details
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setDeleteTarget({
-                              type: 'submission',
-                              id: sub.id,
-                              title: sub.submissionTitle,
-                            });
-                          }}
-                          title="Delete submission"
-                        >
-                          <Trash2 className="size-3.5" />
-                        </Button>
-                      </CardFooter>
-                    </Card>
+                      submission={sub}
+                      onSelect={() => setSelectedSubmissionId(sub.id)}
+                      onDelete={() => {
+                        setDeleteTarget({
+                          type: 'submission',
+                          id: sub.id,
+                          title: sub.submissionTitle,
+                        });
+                      }}
+                    />
                   ))}
                 </div>
               </section>

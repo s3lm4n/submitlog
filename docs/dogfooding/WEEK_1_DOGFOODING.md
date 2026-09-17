@@ -8,9 +8,34 @@ Track every real-world application form, job application, multi-step flow, and s
 ## Dogfooding Overview
 
 - **Version**: `0.1.0`
-- **Baseline Commit**: `32f4b82ff38ace90cea95150acfef4df63f611f8`
+- **Active Baseline Commit**: `688b424950e71d44ca804db59d3ca6defe3d5161` (`688b424`)
 - **Evaluation Period**: 7 Days
 - **Core Principle**: Auto-save = YES, Auto-restore = NO (explicit user action only)
+- **Security/Correctness Baseline**:
+  - Tests: 426 passed / 24 test files
+  - Chromium MV3: 608.14 kB
+  - Firefox MV2: 608.25 kB
+  - Production vulnerabilities: 0
+- **Note**: Dogfooding begins only after the pre-dogfood adversarial security audit and remediation pass completed.
+
+---
+
+## Week 1 Focus Areas
+
+Track especially during daily usage:
+
+1. Did Answer Memory actually save time?
+2. Did correct answers appear for reasonable label variants?
+3. Were wrong suggestions offered?
+4. Did any legitimate field unexpectedly fail to save?
+5. Did any sensitive field appear in Archive?
+6. Did multi-step application workflows remain coherent?
+7. Did hash-routed multi-step forms fragment?
+8. Did Pause work immediately?
+9. Did Site Disable work immediately?
+10. Did draft deletion remain permanent until a real new edit?
+11. Did SubmitLog cause typing/page performance issues?
+12. Did Archive become useful for retrieving previous answers?
 
 ---
 

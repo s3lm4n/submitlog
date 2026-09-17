@@ -7,6 +7,7 @@ import { exportAllAsJson, downloadFile } from '../../src/export/exporter';
 import { SubmissionDetail } from './SubmissionDetail';
 import { DraftDetail } from './DraftDetail';
 import { DraftCard, SubmissionCard } from './ArchiveCard';
+import { SupportCard } from './SupportCard';
 
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -361,6 +362,13 @@ export function Archive() {
               </section>
             )}
           </div>
+        )}
+
+        {/* Support Section */}
+        {!loading && (
+          <section className="mt-16 pt-8 border-t border-border/40">
+            <SupportCard />
+          </section>
         )}
       </main>
 

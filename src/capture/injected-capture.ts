@@ -25,6 +25,7 @@ export interface InjectedScanResult {
   totalFields: number;
   answeredCount: number;
   score: number;
+  formFamilyKey?: string;
   inaccessibleFrameDetected?: boolean;
   detectedFields?: InjectedDetectedField[];
 }
@@ -36,6 +37,7 @@ export interface InjectedCaptureResult {
   totalDetected: number;
   includedCount: number;
   answeredCount: number;
+  formFamilyKey?: string;
   inaccessibleFrameDetected?: boolean;
   detectedFields?: InjectedDetectedField[];
 }
@@ -369,6 +371,150 @@ export function scanPageForms(): InjectedScanResult {
     return '';
   }
 
+  const CHAT_OR_COMPOSER_PATTERNS =
+    /\b(chat|thread|conversation|composer|prompt-box|prompt-input|message-input|ai-box|chatbot|reply-box|comment-box|chat-input|chatbox|chat-window)\b/i;
+
+  const CHAT_ACTION_PATTERNS =
+    /^(send|stop|regenerate|ask|attach|mic|new chat|prompt|ask gemini|ask copilot)$/i;
+
+  const EDITOR_CONTAINER_PATTERNS =
+    /\b(canvas|designer|whiteboard|artboard|document-editor|design-editor|rich-text-editor|prosemirror|monaco-editor|ace_editor|ql-editor|canvas-container|page-container)\b/i;
+
+  function isNonSubmissionContext(container: Element, elements: HTMLElement[]): boolean {
+    const idAndClass = `${container.id} ${container.className}`.toLowerCase();
+
+    let hasApplicationFields = false;
+    let textControlCount = 0;
+
+    for (const el of elements) {
+      const type = el instanceof HTMLInputElement ? el.type.toLowerCase() : '';
+      if (['email', 'tel', 'number', 'date'].includes(type)) {
+        hasApplicationFields = true;
+        break;
+      }
+      const label = getLabelText(el);
+      if (
+        label &&
+        /name|email|phone|address|applicant|organization|grant|apply|job|proposal|inquiry|registration/i.test(
+          label,
+        )
+      ) {
+        hasApplicationFields = true;
+        break;
+      }
+      if (
+        el instanceof HTMLTextAreaElement ||
+        type === 'text' ||
+        el.getAttribute('role') === 'textbox' ||
+        el.isContentEditable
+      ) {
+        textControlCount++;
+      }
+    }
+
+    const hasEditorSemantics =
+      EDITOR_CONTAINER_PATTERNS.test(idAndClass) ||
+      Boolean(
+        container.closest(
+          '.canvas, [role="region"][aria-label*="canvas" i], .design-editor, .document-editor, .whiteboard, .artboard',
+        ),
+      );
+
+    const hasToolbars = Boolean(
+      container.querySelector(
+        '[role="toolbar"], [role="menubar"], .toolbar, .formatting-bar, .editor-toolbar',
+      ) || container.closest('[role="toolbar"], [role="menubar"], .toolbar'),
+    );
+
+    if ((hasEditorSemantics || hasToolbars) && !hasApplicationFields) {
+      if (elements.length <= 4) {
+        return true;
+      }
+    }
+
+    const hasChatSemantics =
+      CHAT_OR_COMPOSER_PATTERNS.test(idAndClass) ||
+      Boolean(
+        container.closest(
+          '[role="log"], [role="marquee"], [class*="chat" i], [class*="thread" i], [class*="conversation" i], [class*="composer" i], [class*="prompt" i]',
+        ),
+      );
+
+    const buttons = Array.from(
+      container.querySelectorAll(
+        'button, input[type="submit"], input[type="button"], div[role="button"]',
+      ),
+    );
+    const hasChatAction = buttons.some((b) => {
+      const text = (b.textContent || (b as HTMLInputElement).value || '').trim();
+      return CHAT_ACTION_PATTERNS.test(text);
+    });
+
+    if (hasChatSemantics && !hasApplicationFields) {
+      if (elements.length <= 3) {
+        return true;
+      }
+    }
+
+    if (textControlCount === 1 && elements.length <= 2 && hasChatAction && !hasApplicationFields) {
+      return true;
+    }
+
+    return false;
+  }
+
+  function isVolatileId(id: string): boolean {
+    if (!id) return true;
+    const trimmed = id.trim();
+    if (/^(:r\w+:|react-aria|ember\d+|__BVID__|ng-|v-\w+)/i.test(trimmed)) return true;
+    if (/^\d+$/.test(trimmed)) return true;
+    if (/^[a-f0-9]{8,}(-[a-f0-9]{4,})*$/i.test(trimmed)) return true;
+    if (trimmed.length < 3) return true;
+    return false;
+  }
+
+  function extractFormFamilyKey(container: Element | null | undefined): string {
+    if (!container) return '';
+    if (container instanceof HTMLFormElement) {
+      const action = container.getAttribute('action');
+      if (action && !action.startsWith('javascript:') && action !== '#' && action !== '') {
+        try {
+          const parsed = new URL(action, 'https://dummy.local');
+          const cleanPath = parsed.pathname.toLowerCase().trim().replace(/\/+$/, '');
+          const lastPart = cleanPath.split('/').pop() || '';
+          if (cleanPath && cleanPath !== '/' && cleanPath !== '/#' && !isVolatileId(lastPart)) {
+            return `action:${cleanPath}`;
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+    const name = container.getAttribute('name');
+    if (name && !isVolatileId(name)) {
+      return `name:${name.toLowerCase().trim()}`;
+    }
+    const id = container.getAttribute('id');
+    if (id && !isVolatileId(id)) {
+      return `id:${id.toLowerCase().trim()}`;
+    }
+    const ariaLabel = container.getAttribute('aria-label');
+    if (
+      ariaLabel &&
+      ariaLabel.trim().length >= 3 &&
+      ariaLabel.length <= 60 &&
+      !isVolatileId(ariaLabel)
+    ) {
+      const norm = ariaLabel
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '');
+      if (norm) return `label:${norm}`;
+    }
+    return '';
+  }
+
   const allControls = collectControls(document.body || document.documentElement);
   if (allControls.length === 0) {
     const hasIframes = document.querySelectorAll('iframe').length > 0;
@@ -386,6 +532,7 @@ export function scanPageForms(): InjectedScanResult {
     totalFields: number;
     answeredCount: number;
     score: number;
+    formFamilyKey?: string;
     detectedFields?: InjectedDetectedField[];
   }
 
@@ -549,7 +696,7 @@ export function scanPageForms(): InjectedScanResult {
   }
 
   function evaluateCandidate(container: Element, elements: HTMLElement[]) {
-    if (isUtility(container)) return;
+    if (isUtility(container) || isNonSubmissionContext(container, elements)) return;
 
     let totalMeaningful = 0;
     let answered = 0;
@@ -708,6 +855,7 @@ export function scanPageForms(): InjectedScanResult {
         totalFields: totalMeaningful,
         answeredCount: answered,
         score,
+        formFamilyKey: extractFormFamilyKey(container),
         detectedFields,
       });
     }
@@ -741,6 +889,7 @@ export function scanPageForms(): InjectedScanResult {
     totalFields: best.totalFields,
     answeredCount: best.answeredCount,
     score: best.score,
+    formFamilyKey: best.formFamilyKey || '',
     inaccessibleFrameDetected: false,
     detectedFields: best.detectedFields,
   };
@@ -1095,6 +1244,150 @@ export function capturePageForms(): InjectedCaptureResult {
     return '';
   }
 
+  const CHAT_OR_COMPOSER_PATTERNS =
+    /\b(chat|thread|conversation|composer|prompt-box|prompt-input|message-input|ai-box|chatbot|reply-box|comment-box|chat-input|chatbox|chat-window)\b/i;
+
+  const CHAT_ACTION_PATTERNS =
+    /^(send|stop|regenerate|ask|attach|mic|new chat|prompt|ask gemini|ask copilot)$/i;
+
+  const EDITOR_CONTAINER_PATTERNS =
+    /\b(canvas|designer|whiteboard|artboard|document-editor|design-editor|rich-text-editor|prosemirror|monaco-editor|ace_editor|ql-editor|canvas-container|page-container)\b/i;
+
+  function isNonSubmissionContext(container: Element, elements: HTMLElement[]): boolean {
+    const idAndClass = `${container.id} ${container.className}`.toLowerCase();
+
+    let hasApplicationFields = false;
+    let textControlCount = 0;
+
+    for (const el of elements) {
+      const type = el instanceof HTMLInputElement ? el.type.toLowerCase() : '';
+      if (['email', 'tel', 'number', 'date'].includes(type)) {
+        hasApplicationFields = true;
+        break;
+      }
+      const label = getLabelText(el);
+      if (
+        label &&
+        /name|email|phone|address|applicant|organization|grant|apply|job|proposal|inquiry|registration/i.test(
+          label,
+        )
+      ) {
+        hasApplicationFields = true;
+        break;
+      }
+      if (
+        el instanceof HTMLTextAreaElement ||
+        type === 'text' ||
+        el.getAttribute('role') === 'textbox' ||
+        el.isContentEditable
+      ) {
+        textControlCount++;
+      }
+    }
+
+    const hasEditorSemantics =
+      EDITOR_CONTAINER_PATTERNS.test(idAndClass) ||
+      Boolean(
+        container.closest(
+          '.canvas, [role="region"][aria-label*="canvas" i], .design-editor, .document-editor, .whiteboard, .artboard',
+        ),
+      );
+
+    const hasToolbars = Boolean(
+      container.querySelector(
+        '[role="toolbar"], [role="menubar"], .toolbar, .formatting-bar, .editor-toolbar',
+      ) || container.closest('[role="toolbar"], [role="menubar"], .toolbar'),
+    );
+
+    if ((hasEditorSemantics || hasToolbars) && !hasApplicationFields) {
+      if (elements.length <= 4) {
+        return true;
+      }
+    }
+
+    const hasChatSemantics =
+      CHAT_OR_COMPOSER_PATTERNS.test(idAndClass) ||
+      Boolean(
+        container.closest(
+          '[role="log"], [role="marquee"], [class*="chat" i], [class*="thread" i], [class*="conversation" i], [class*="composer" i], [class*="prompt" i]',
+        ),
+      );
+
+    const buttons = Array.from(
+      container.querySelectorAll(
+        'button, input[type="submit"], input[type="button"], div[role="button"]',
+      ),
+    );
+    const hasChatAction = buttons.some((b) => {
+      const text = (b.textContent || (b as HTMLInputElement).value || '').trim();
+      return CHAT_ACTION_PATTERNS.test(text);
+    });
+
+    if (hasChatSemantics && !hasApplicationFields) {
+      if (elements.length <= 3) {
+        return true;
+      }
+    }
+
+    if (textControlCount === 1 && elements.length <= 2 && hasChatAction && !hasApplicationFields) {
+      return true;
+    }
+
+    return false;
+  }
+
+  function isVolatileId(id: string): boolean {
+    if (!id) return true;
+    const trimmed = id.trim();
+    if (/^(:r\w+:|react-aria|ember\d+|__BVID__|ng-|v-\w+)/i.test(trimmed)) return true;
+    if (/^\d+$/.test(trimmed)) return true;
+    if (/^[a-f0-9]{8,}(-[a-f0-9]{4,})*$/i.test(trimmed)) return true;
+    if (trimmed.length < 3) return true;
+    return false;
+  }
+
+  function extractFormFamilyKey(container: Element | null | undefined): string {
+    if (!container) return '';
+    if (container instanceof HTMLFormElement) {
+      const action = container.getAttribute('action');
+      if (action && !action.startsWith('javascript:') && action !== '#' && action !== '') {
+        try {
+          const parsed = new URL(action, 'https://dummy.local');
+          const cleanPath = parsed.pathname.toLowerCase().trim().replace(/\/+$/, '');
+          const lastPart = cleanPath.split('/').pop() || '';
+          if (cleanPath && cleanPath !== '/' && cleanPath !== '/#' && !isVolatileId(lastPart)) {
+            return `action:${cleanPath}`;
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+    const name = container.getAttribute('name');
+    if (name && !isVolatileId(name)) {
+      return `name:${name.toLowerCase().trim()}`;
+    }
+    const id = container.getAttribute('id');
+    if (id && !isVolatileId(id)) {
+      return `id:${id.toLowerCase().trim()}`;
+    }
+    const ariaLabel = container.getAttribute('aria-label');
+    if (
+      ariaLabel &&
+      ariaLabel.trim().length >= 3 &&
+      ariaLabel.length <= 60 &&
+      !isVolatileId(ariaLabel)
+    ) {
+      const norm = ariaLabel
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '');
+      if (norm) return `label:${norm}`;
+    }
+    return '';
+  }
+
   const allControls = collectControls(document.body || document.documentElement);
   if (allControls.length === 0) {
     const hasIframes = document.querySelectorAll('iframe').length > 0;
@@ -1115,6 +1408,7 @@ export function capturePageForms(): InjectedCaptureResult {
     excludedCount: number;
     totalDetected: number;
     answeredCount: number;
+    formFamilyKey?: string;
     detectedFields?: InjectedDetectedField[];
   }
 
@@ -1278,7 +1572,7 @@ export function capturePageForms(): InjectedCaptureResult {
   }
 
   function evaluateCandidate(container: Element, elements: HTMLElement[]) {
-    if (isUtility(container)) return;
+    if (isUtility(container) || isNonSubmissionContext(container, elements)) return;
 
     const fields: InjectedCapturedField[] = [];
     const detectedFields: InjectedDetectedField[] = [];
@@ -1531,6 +1825,7 @@ export function capturePageForms(): InjectedCaptureResult {
         excludedCount,
         totalDetected: totalMeaningful,
         answeredCount: answered,
+        formFamilyKey: extractFormFamilyKey(container),
         detectedFields,
       });
     }
@@ -1570,6 +1865,7 @@ export function capturePageForms(): InjectedCaptureResult {
     totalDetected: winner.totalDetected,
     includedCount: winner.answeredCount,
     answeredCount: winner.answeredCount,
+    formFamilyKey: winner.formFamilyKey || '',
     inaccessibleFrameDetected: false,
     detectedFields: winner.detectedFields,
   };

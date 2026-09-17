@@ -82,6 +82,7 @@ export default defineContentScript({
 
       const detectedFields = scan.detectedFields;
       const formFingerprint = computeFormFingerprint(hostname, detectedFields);
+      const formFamilyKey = scan.formFamilyKey || '';
 
       // Avoid redundant re-arming if the form structure has not changed
       if (isArmed && formFingerprint === currentFingerprint) {
@@ -100,6 +101,7 @@ export default defineContentScript({
         pageTitle: document.title || hostname,
         pageUrl: url,
         formFingerprint,
+        formFamilyKey,
         initialFields: detectedFields,
       });
 
@@ -107,7 +109,7 @@ export default defineContentScript({
       safeSendMessage<{ draft: FormDraft | null }>(
         {
           type: 'SUBMITLOG_GET_DRAFT',
-          payload: { origin, pathname, formFingerprint },
+          payload: { origin, pathname, formFingerprint, formFamilyKey },
         },
         (res) => {
           if (res?.draft && res.draft.fields && Object.keys(res.draft.fields).length > 0) {
@@ -125,6 +127,45 @@ export default defineContentScript({
 
     // Run initial initialization
     initPageAutosaveAndAssistant();
+
+    // Listen for draft deletion broadcast from background to prevent resurrection
+    try {
+      const g = globalThis as unknown as {
+        browser?: {
+          runtime?: { onMessage?: { addListener: (cb: (msg: unknown) => void) => void } };
+        };
+        chrome?: {
+          runtime?: { onMessage?: { addListener: (cb: (msg: unknown) => void) => void } };
+        };
+      };
+      const runtime = g.browser?.runtime || g.chrome?.runtime;
+      if (runtime?.onMessage?.addListener) {
+        runtime.onMessage.addListener((msg) => {
+          const m = msg as { type?: string; payload?: { origin?: string; pathname?: string } };
+          if (m?.type === 'SUBMITLOG_DRAFT_DELETED') {
+            const { origin: delOrigin, pathname: delPath } = m.payload || {};
+            const url = window.location.href;
+            if (url.startsWith('http://') || url.startsWith('https://')) {
+              try {
+                const p = new URL(url);
+                if (
+                  p.origin.toLowerCase() === delOrigin?.toLowerCase() &&
+                  (!delPath || delPath === normalizeDraftPathname(url))
+                ) {
+                  if (typeof window.__submitlog_autosave_on_delete === 'function') {
+                    window.__submitlog_autosave_on_delete();
+                  }
+                }
+              } catch {
+                // ignore
+              }
+            }
+          }
+        });
+      }
+    } catch {
+      // ignore
+    }
 
     // Observe meaningful SPA DOM changes (with restrained 250ms debounce)
     let observerTimer: ReturnType<typeof setTimeout> | null = null;

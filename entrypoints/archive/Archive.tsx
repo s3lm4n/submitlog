@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import type { Submission } from '../../src/models/submission';
 import type { FormDraft } from '../../src/models/draft';
 import { createSubmissionRepository } from '../../src/storage/submission-repository';
-import { createDraftRepository } from '../../src/storage/draft-repository';
+import { createDraftRepository, consolidateDrafts } from '../../src/storage/draft-repository';
 import { exportAllAsJson, downloadFile } from '../../src/export/exporter';
 import { SubmissionDetail } from './SubmissionDetail';
 import { DraftDetail } from './DraftDetail';
@@ -15,6 +15,7 @@ export function Archive() {
   const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
+  const [isDeletingDraft, setIsDeletingDraft] = useState(false);
 
   const subRepo = useMemo(() => createSubmissionRepository(), []);
   const draftRepo = useMemo(() => createDraftRepository(), []);
@@ -22,23 +23,25 @@ export function Archive() {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [subsData, draftsData] = await Promise.all([
+      const [subsData, rawDrafts] = await Promise.all([
         subRepo.getAll().catch(() => [] as Submission[]),
         draftRepo.getAll().catch(() => [] as FormDraft[]),
       ]);
+
+      const { canonicalDrafts } = consolidateDrafts(rawDrafts);
 
       subsData.sort(
         (a: Submission, b: Submission) =>
           new Date(b.updatedAt || b.createdAt).getTime() -
           new Date(a.updatedAt || a.createdAt).getTime(),
       );
-      draftsData.sort(
+      canonicalDrafts.sort(
         (a: FormDraft, b: FormDraft) =>
           new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
       );
 
       setSubmissions(subsData);
-      setDrafts(draftsData);
+      setDrafts(canonicalDrafts);
     } catch {
       setSubmissions([]);
       setDrafts([]);
@@ -89,10 +92,52 @@ export function Archive() {
   }
 
   async function handleDeleteDraft(id: string) {
+    if (isDeletingDraft) return;
     if (!window.confirm('Are you sure you want to delete this draft?')) return;
-    await draftRepo.delete(id);
+
+    setIsDeletingDraft(true);
+    const draftToDelete = drafts.find((d) => d.id === id);
+    const previousDrafts = [...drafts];
+
+    // Optimistically remove card immediately from local UI state
+    setDrafts((prev) => prev.filter((d) => d.id !== id));
     if (selectedDraftId === id) setSelectedDraftId(null);
-    await loadData();
+
+    try {
+      // 1. Delete from repository
+      await draftRepo.delete(id);
+
+      // 2. Notify background to set tombstone and alert content scripts
+      try {
+        const g = globalThis as unknown as {
+          browser?: { runtime?: { sendMessage?: (msg: unknown) => void } };
+          chrome?: { runtime?: { sendMessage?: (msg: unknown) => void } };
+        };
+        const runtime = g.browser?.runtime || g.chrome?.runtime;
+        if (runtime && typeof runtime.sendMessage === 'function') {
+          runtime.sendMessage({
+            type: 'SUBMITLOG_DELETE_DRAFT',
+            payload: {
+              id,
+              origin: draftToDelete?.origin,
+              pathname: draftToDelete?.pathname,
+              formFamilyKey: draftToDelete?.formFamilyKey,
+            },
+          });
+        }
+      } catch {
+        // ignore background communication error
+      }
+
+      // 3. Reconcile with repository state
+      await loadData();
+    } catch {
+      // If deletion fails, restore previous drafts and show error
+      setDrafts(previousDrafts);
+      alert('Failed to delete draft. Please try again.');
+    } finally {
+      setIsDeletingDraft(false);
+    }
   }
 
   async function handleUpdateSubmission(updated: Submission) {

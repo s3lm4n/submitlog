@@ -3,12 +3,14 @@ import type { Submission } from '../models/submission';
 import type { FormDraft } from '../models/draft';
 
 import type { AnswerMemoryEntry } from './answer-memory-repository';
+import type { DraftTombstone } from './tombstone-registry';
 
 const DB_NAME = 'submitlog';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 const STORE_SUBMISSIONS = 'submissions';
 const STORE_DRAFTS = 'drafts';
 const STORE_ANSWERS = 'answer_memory';
+const STORE_TOMBSTONES = 'draft_tombstones';
 
 export interface SubmitLogDB extends DBSchema {
   submissions: {
@@ -36,6 +38,14 @@ export interface SubmitLogDB extends DBSchema {
       'by-label': string;
       'by-hostname': string;
       'by-updated': string;
+    };
+  };
+  draft_tombstones: {
+    key: string;
+    value: DraftTombstone;
+    indexes: {
+      'by-deleted': number;
+      'by-expires': number;
     };
   };
 }
@@ -71,6 +81,12 @@ export async function getDB(): Promise<IDBPDatabase<SubmitLogDB>> {
           answerStore.createIndex('by-label', 'normalizedLabel');
           answerStore.createIndex('by-hostname', 'hostname');
           answerStore.createIndex('by-updated', 'updatedAt');
+        }
+
+        if (!db.objectStoreNames.contains(STORE_TOMBSTONES)) {
+          const tombStore = db.createObjectStore(STORE_TOMBSTONES, { keyPath: 'stableDraftId' });
+          tombStore.createIndex('by-deleted', 'deletedAt');
+          tombStore.createIndex('by-expires', 'expiresAt');
         }
       },
     });

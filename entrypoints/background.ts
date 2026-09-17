@@ -12,14 +12,19 @@ import {
 } from '../src/background/assistant-handler';
 import { createSubmissionRepository } from '../src/storage/submission-repository';
 import { createDraftRepository } from '../src/storage/draft-repository';
+import { buildDraftId } from '../src/models/draft';
+import { setDraftTombstone, createTombstoneRepository } from '../src/storage/tombstone-registry';
 import { injectedFillForm, type SavedAnswerToFill } from '../src/capture/injected-fill';
 
 export default defineBackground(() => {
-  // 1. Startup: draft cleanup (30-day retention policy)
+  // 1. Startup: draft cleanup (30-day retention policy), duplicate migration & tombstone cleanup
   try {
-    createDraftRepository()
-      .cleanupExpired()
-      .catch(() => {});
+    const draftRepo = createDraftRepository();
+    draftRepo.cleanupExpired().catch(() => {});
+    draftRepo.consolidateDuplicates?.().catch(() => {});
+
+    const tombstoneRepo = createTombstoneRepository();
+    tombstoneRepo.cleanupExpired().catch(() => {});
   } catch {
     // DB initializes on demand
   }
@@ -60,8 +65,8 @@ export default defineBackground(() => {
         return true;
       }
 
-      const { origin, pathname, formFingerprint } = message.payload || {};
-      handleGetDraft(origin, pathname, formFingerprint)
+      const { origin, pathname, formFingerprint, formFamilyKey } = message.payload || {};
+      handleGetDraft(origin, pathname, formFamilyKey || formFingerprint)
         .then((draft) => sendResponse({ draft }))
         .catch(() => sendResponse({ draft: null }));
       return true;
@@ -78,6 +83,48 @@ export default defineBackground(() => {
       handleClearDraft(draftId)
         .then((res) => sendResponse(res))
         .catch((err) => sendResponse({ success: false, error: String(err) }));
+      return true;
+    }
+
+    if (message?.type === 'SUBMITLOG_DELETE_DRAFT') {
+      const { id, origin, pathname, formFamilyKey } = message.payload || {};
+      const stableDraftId =
+        id || (origin && pathname ? buildDraftId(origin, pathname, formFamilyKey) : '');
+
+      if (stableDraftId) {
+        setDraftTombstone(stableDraftId, Date.now()).catch(() => {});
+      }
+
+      const draftRepo = createDraftRepository();
+      if (id) {
+        draftRepo.delete(id).catch(() => {});
+      }
+      if (stableDraftId && stableDraftId !== id) {
+        draftRepo.delete(stableDraftId).catch(() => {});
+      }
+
+      // Broadcast to active tabs to cancel pending flushes and mark draft as deleted
+      try {
+        browser.tabs
+          .query({})
+          .then((tabs) => {
+            for (const tab of tabs) {
+              if (tab.id) {
+                browser.tabs
+                  .sendMessage(tab.id, {
+                    type: 'SUBMITLOG_DRAFT_DELETED',
+                    payload: { stableDraftId, origin, pathname },
+                  })
+                  .catch(() => {});
+              }
+            }
+          })
+          .catch(() => {});
+      } catch {
+        // ignore
+      }
+
+      sendResponse({ status: 'deleted' });
       return true;
     }
 

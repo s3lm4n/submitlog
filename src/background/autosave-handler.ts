@@ -17,12 +17,17 @@ import {
   createAnswerMemoryRepository,
   type AnswerMemoryRepository,
 } from '../storage/answer-memory-repository';
+import {
+  isAutosaveRejectedByTombstone,
+  type TombstoneRepository,
+} from '../storage/tombstone-registry';
 
 export interface AutosaveFieldPayload {
   editingSessionId?: string;
   origin?: string;
   pathname?: string;
   formFingerprint?: string;
+  formFamilyKey?: string;
   hostname: string;
   pageTitle: string;
   pageUrl: string;
@@ -38,7 +43,8 @@ export interface AutosaveFieldPayload {
 }
 
 export interface AutosaveResponse {
-  status: 'saved' | 'unchanged' | 'skipped' | 'error' | 'private_browsing_blocked';
+  status:
+    'saved' | 'unchanged' | 'skipped' | 'error' | 'private_browsing_blocked' | 'deleted_tombstone';
   submissionId?: string;
   draftId?: string;
   lastSaved?: string;
@@ -118,6 +124,7 @@ export async function handleAutosaveMessage(
   customRepo?: DraftRepository | SubmissionRepository,
   isIncognitoOrAnswerMemoryRepo?: boolean | AnswerMemoryRepository,
   customAnswerMemoryRepo?: AnswerMemoryRepository,
+  customTombstoneRepo?: TombstoneRepository,
 ): Promise<AutosaveResponse> {
   try {
     const isIncognito =
@@ -162,8 +169,20 @@ export async function handleAutosaveMessage(
     const pathname = normalizeDraftPathname(payload.pathname || payload.pageUrl || '/');
     const formFingerprint =
       payload.formFingerprint || computeFormFingerprint(hostname, allCurrentFields);
-    const draftId = buildDraftId(origin, pathname, formFingerprint);
+    const draftId = buildDraftId(origin, pathname, payload.formFamilyKey);
     const normLabel = normalizeAnswerLabel(field.label);
+
+    // Stale recreation tombstone protection: reject if draft was deleted and this is a stale write
+    if (
+      await isAutosaveRejectedByTombstone(
+        draftId,
+        payload.clientTimestamp,
+        payload.revision,
+        customTombstoneRepo,
+      )
+    ) {
+      return { status: 'deleted_tombstone' };
+    }
 
     // Support legacy SubmissionRepository mock for backward-compatibility in legacy tests
     const isLegacySubRepo =
@@ -181,7 +200,9 @@ export async function handleAutosaveMessage(
     // Modern isolated DraftRepository flow:
     const draftRepo: DraftRepository = (customRepo as DraftRepository) || createDraftRepository();
 
-    const existingDraft = await draftRepo.getByForm(origin, pathname, formFingerprint);
+    const existingDraft =
+      (await draftRepo.getByForm(origin, pathname, payload.formFamilyKey)) ||
+      (await draftRepo.getById(draftId));
     const now = new Date().toISOString();
 
     if (!existingDraft) {
@@ -206,6 +227,7 @@ export async function handleAutosaveMessage(
         origin,
         hostname,
         pathname,
+        formFamilyKey: payload.formFamilyKey,
         pageTitle: pageTitle || hostname,
         pageUrl: pageUrl || `${origin}/`,
         formFingerprint,
@@ -311,6 +333,10 @@ export async function handleAutosaveMessage(
       clientTimestamp: payload.clientTimestamp ?? Date.now(),
     };
     existingDraft.updatedAt = now;
+    existingDraft.formFingerprint = formFingerprint;
+    if (payload.formFamilyKey) existingDraft.formFamilyKey = payload.formFamilyKey;
+    if (pageTitle) existingDraft.pageTitle = pageTitle;
+    if (pageUrl) existingDraft.pageUrl = pageUrl;
 
     await draftRepo.save(existingDraft);
 

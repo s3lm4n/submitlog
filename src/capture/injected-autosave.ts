@@ -7,6 +7,7 @@
 export interface ArmAutosaveOptions {
   editingSessionId: string;
   formFingerprint?: string;
+  formFamilyKey?: string;
   origin?: string;
   hostname: string;
   pathname?: string;
@@ -28,6 +29,7 @@ declare global {
     __submitlog_autosave_session?: ArmAutosaveOptions;
     __submitlog_autosave_cleanup?: () => void;
     __submitlog_autosave_flush?: () => void;
+    __submitlog_autosave_on_delete?: () => void;
     __submitlog_suppress_autosave?: boolean;
   }
 }
@@ -241,6 +243,7 @@ export function injectedArmAutosave(options: ArmAutosaveOptions): { success: boo
               pageTitle: options.pageTitle,
               pageUrl: options.pageUrl,
               formFingerprint: options.formFingerprint,
+              formFamilyKey: options.formFamilyKey,
               matchingSubmissionId: options.matchingSubmissionId,
               clientTimestamp,
               revision,
@@ -276,8 +279,22 @@ export function injectedArmAutosave(options: ArmAutosaveOptions): { success: boo
     }
   }
 
+  let isDraftDeleted = false;
+
+  window.__submitlog_autosave_on_delete = () => {
+    isDraftDeleted = true;
+    for (const state of pendingFields.values()) {
+      if (state.timer) {
+        clearTimeout(state.timer);
+        state.timer = null;
+      }
+    }
+    pendingFields.clear();
+  };
+
   function flushAllFields() {
-    for (const key of pendingFields.keys()) {
+    if (isDraftDeleted || pendingFields.size === 0) return;
+    for (const key of Array.from(pendingFields.keys())) {
       flushField(key);
     }
   }
@@ -287,6 +304,9 @@ export function injectedArmAutosave(options: ArmAutosaveOptions): { success: boo
   function processElementChange(target: HTMLElement, delayMs = 300, immediate = false) {
     if (window.__submitlog_suppress_autosave) return;
     if (isSensitive(target)) return;
+
+    // A real user interaction has occurred, allow drafting again
+    isDraftDeleted = false;
 
     const isInput = target instanceof HTMLInputElement;
     const isTextArea = target instanceof HTMLTextAreaElement;

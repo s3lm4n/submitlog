@@ -1,0 +1,44 @@
+<!-- 
+  Title: Gemini Chat Composer Fixture
+  Purpose: Real-world AI chat composer interface that should NOT be detected as a form draft.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Google Gemini - Chat</title>
+  </head>
+  <body>
+    <div class="chat-app">
+      <!-- Conversation History -->
+      <div class="chat-history" role="log" aria-label="Conversation history">
+        <div class="chat-message user">
+          <p>Can you summarize how async/await works in JavaScript?</p>
+        </div>
+        <div class="chat-message model">
+          <p>Certainly! Async/await in JavaScript is syntactic sugar over Promises...</p>
+        </div>
+      </div>
+
+      <!-- Chat Composer Box (Single prompt input with Send/Attach actions) -->
+      <div class="chat-composer-container">
+        <div class="chat-composer" role="region" aria-label="Chat composer">
+          <div
+            class="ql-editor prompt-box"
+            contenteditable="true"
+            role="textbox"
+            aria-label="Enter a prompt here"
+            data-placeholder="Ask Gemini"
+          >
+            Tell me more about microtasks
+          </div>
+          <div class="composer-actions">
+            <button type="button" aria-label="Add files">Attach</button>
+            <button type="button" aria-label="Microphone">Mic</button>
+            <button type="button" class="send-button" aria-label="Submit prompt">Send</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

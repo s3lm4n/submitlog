@@ -84,6 +84,93 @@ export function isUtilityForm(element: Element): boolean {
   return false;
 }
 
+const CHAT_OR_COMPOSER_PATTERNS =
+  /\b(chat|thread|conversation|composer|prompt-box|prompt-input|message-input|ai-box|chatbot|reply-box|comment-box|chat-input|chatbox|chat-window)\b/i;
+
+const CHAT_ACTION_PATTERNS =
+  /^(send|stop|regenerate|ask|attach|mic|new chat|prompt|ask gemini|ask copilot)$/i;
+
+const EDITOR_CONTAINER_PATTERNS =
+  /\b(canvas|designer|whiteboard|artboard|document-editor|design-editor|rich-text-editor|prosemirror|monaco-editor|ace_editor|ql-editor|canvas-container|page-container)\b/i;
+
+/**
+ * Checks if a candidate element or form is primarily a chat/AI composer, document/design canvas editor,
+ * or non-submission context that should NOT be archived as a form draft.
+ */
+export function isNonSubmissionContext(
+  container: Element,
+  fields: ScoredFieldCandidate[],
+): boolean {
+  const idAndClass = `${container.id} ${container.className}`.toLowerCase();
+
+  const hasApplicationFields = fields.some(
+    (f) =>
+      ['email', 'tel', 'number', 'date'].includes(f.fieldType) ||
+      (f.label &&
+        /name|email|phone|address|applicant|organization|grant|apply|job|proposal|inquiry|registration/i.test(
+          f.label,
+        )),
+  );
+
+  // 1. Editor / Canvas / Design / Rich-Text Editor surfaces
+  const hasEditorSemantics =
+    EDITOR_CONTAINER_PATTERNS.test(idAndClass) ||
+    Boolean(
+      container.closest(
+        '.canvas, [role="region"][aria-label*="canvas" i], .design-editor, .document-editor, .whiteboard, .artboard',
+      ),
+    );
+
+  const hasToolbars = Boolean(
+    container.querySelector(
+      '[role="toolbar"], [role="menubar"], .toolbar, .formatting-bar, .editor-toolbar',
+    ) || container.closest('[role="toolbar"], [role="menubar"], .toolbar'),
+  );
+
+  if ((hasEditorSemantics || hasToolbars) && !hasApplicationFields) {
+    if (fields.length <= 4) {
+      return true;
+    }
+  }
+
+  // 2. Chat / AI prompt composer / Conversation box
+  const hasChatSemantics =
+    CHAT_OR_COMPOSER_PATTERNS.test(idAndClass) ||
+    Boolean(
+      container.closest(
+        '[role="log"], [role="marquee"], [class*="chat" i], [class*="thread" i], [class*="conversation" i], [class*="composer" i], [class*="prompt" i]',
+      ),
+    );
+
+  const buttons = Array.from(
+    container.querySelectorAll(
+      'button, input[type="submit"], input[type="button"], div[role="button"]',
+    ),
+  );
+  const hasChatAction = buttons.some((b) => {
+    const text = (b.textContent || (b as HTMLInputElement).value || '').trim();
+    return CHAT_ACTION_PATTERNS.test(text);
+  });
+
+  const textInputs = fields.filter(
+    (f) => f.isTextarea || f.fieldType === 'text' || f.fieldType === 'other',
+  );
+
+  // Chat/AI composer with prompt box and without multi-field application structure
+  if (hasChatSemantics && !hasApplicationFields) {
+    if (fields.length <= 3) {
+      return true;
+    }
+  }
+
+  // Single prompt input + chat action (Send/Ask/Stop/Regenerate) without application structure
+  if (textInputs.length === 1 && fields.length <= 2 && hasChatAction && !hasApplicationFields) {
+    return true;
+  }
+
+  return false;
+}
+
 export interface ScoredFieldCandidate {
   fieldType: string;
   hasValue: boolean;
@@ -106,12 +193,12 @@ export function scoreFormCandidate(
 ): FormScoreResult {
   const reasons: string[] = [];
 
-  // Reject utility forms immediately
-  if (isUtilityForm(container)) {
+  // Reject utility forms or non-submission contexts immediately
+  if (isUtilityForm(container) || isNonSubmissionContext(container, fields)) {
     return {
       score: -999,
       isMeaningful: false,
-      reasons: ['Detected as search, navigation, or utility UI'],
+      reasons: ['Detected as search, navigation, chat composer, or editor UI'],
     };
   }
 

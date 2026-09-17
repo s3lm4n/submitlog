@@ -1,0 +1,55 @@
+<!-- 
+  Title: Canva Design Editor Surface Fixture
+  Purpose: Real-world document/canvas design editor UI that should NOT be detected as a form draft.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Canva - Design Editor</title>
+  </head>
+  <body>
+    <div class="designer-app">
+      <!-- Top Application Bar with Document Title and Export -->
+      <header class="editor-header">
+        <div class="file-menu">
+          <button type="button">File</button>
+          <button type="button">Resize</button>
+        </div>
+        <div class="title-container">
+          <input
+            type="text"
+            class="document-title-input"
+            aria-label="Document title"
+            placeholder="Untitled design"
+            value="Marketing Flyer Draft"
+          />
+        </div>
+        <div class="header-actions">
+          <button type="button">Share</button>
+          <button type="button">Download</button>
+        </div>
+      </header>
+
+      <!-- Formatting Toolbar -->
+      <div class="toolbar formatting-bar" role="toolbar" aria-label="Text formatting">
+        <button type="button" aria-label="Bold"><b>B</b></button>
+        <button type="button" aria-label="Italic"><i>I</i></button>
+        <button type="button" aria-label="Underline"><u>U</u></button>
+        <button type="button" aria-label="Align left">Left</button>
+        <button type="button" aria-label="Color">Color</button>
+      </div>
+
+      <!-- Main Canvas / Artboard Surface -->
+      <main class="canvas-container">
+        <div class="canvas artboard" role="region" aria-label="design canvas" tabindex="0">
+          <div class="canvas-page" data-page="1">
+            <div class="text-box-element">
+              <span class="text-content">Summer Sale 50% Off</span>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </body>
+</html>

@@ -34,50 +34,78 @@ export function isUtilityForm(element: Element): boolean {
     return true;
   }
 
-  const inputs = Array.from(element.querySelectorAll('input'));
-  const textareas = element.querySelectorAll('textarea');
+  const inputs = Array.from(
+    element.querySelectorAll<HTMLInputElement>(
+      'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"])',
+    ),
+  );
+  const textareas = Array.from(element.querySelectorAll<HTMLTextAreaElement>('textarea'));
+  const allControls = [...inputs, ...textareas];
   const idAndClass = `${element.id} ${element.className}`.toLowerCase();
 
-  // Check container id/class for search/filter/toolbar patterns
-  if (
-    SEARCH_PATTERNS.test(idAndClass) &&
-    !APPLICATION_PATTERNS.test(idAndClass) &&
-    textareas.length === 0
-  ) {
-    if (inputs.length <= 4) {
+  // Helper: check if a control is search/query/follow-up oriented
+  const isSearchControl = (el: HTMLInputElement | HTMLTextAreaElement) => {
+    const type = (el as HTMLInputElement).type?.toLowerCase() || '';
+    const name = (el.name || '').toLowerCase();
+    const id = (el.id || '').toLowerCase();
+    const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+    const placeholder = (el.getAttribute('placeholder') || '').toLowerCase();
+    return (
+      type === 'search' ||
+      name === 'q' ||
+      name === 'query' ||
+      name === 'search' ||
+      name.includes('filter') ||
+      id.includes('search') ||
+      id.includes('query') ||
+      id.includes('filter') ||
+      ariaLabel.includes('search') ||
+      ariaLabel.includes('ask a follow') ||
+      ariaLabel.includes('ask anything') ||
+      placeholder.includes('search') ||
+      placeholder.includes('ask a follow')
+    );
+  };
+
+  const hasSearchOrFilterControl = allControls.some(isSearchControl);
+
+  // Check form action
+  const action =
+    element instanceof HTMLFormElement ? element.getAttribute('action')?.toLowerCase() || '' : '';
+  const isSearchAction =
+    action === '/search' ||
+    action.startsWith('/search?') ||
+    action.startsWith('/search/') ||
+    action.includes('search?');
+
+  // Check if any standard application fields exist
+  const hasAppField = allControls.some((el) => {
+    const type = (el as HTMLInputElement).type?.toLowerCase() || '';
+    if (['email', 'tel', 'date', 'number'].includes(type)) return true;
+    const label = (
+      el.getAttribute('aria-label') ||
+      el.getAttribute('name') ||
+      el.id ||
+      ''
+    ).toLowerCase();
+    return /applicant|company|employment|education|experience|address|postal|country|grant|proposal|resume|curriculum/i.test(
+      label,
+    );
+  });
+
+  if (!hasAppField) {
+    if (isSearchAction && allControls.length <= 6) {
       return true;
     }
-  }
-
-  // Check for search or filter input as sole or primary purpose
-  const hasSearchOrFilterInput = inputs.some(
-    (inp) =>
-      inp.type === 'search' ||
-      inp.name === 'q' ||
-      inp.name === 'query' ||
-      inp.name === 'search' ||
-      inp.name.includes('filter') ||
-      inp.id.includes('filter') ||
-      inp.getAttribute('aria-label')?.toLowerCase().includes('search'),
-  );
-
-  if (hasSearchOrFilterInput && inputs.length <= 3 && textareas.length === 0) {
-    return true;
-  }
-
-  // Check form action/id/class if HTMLFormElement
-  if (element instanceof HTMLFormElement) {
-    const action = element.getAttribute('action')?.toLowerCase() || '';
-    const name = element.getAttribute('name')?.toLowerCase() || '';
-    const combined = `${action} ${name} ${idAndClass}`;
+    if (hasSearchOrFilterControl && allControls.length <= 4) {
+      return true;
+    }
     if (
-      SEARCH_PATTERNS.test(combined) &&
-      !APPLICATION_PATTERNS.test(combined) &&
-      textareas.length === 0
+      SEARCH_PATTERNS.test(idAndClass) &&
+      !APPLICATION_PATTERNS.test(idAndClass) &&
+      allControls.length <= 5
     ) {
-      if (inputs.length <= 4) {
-        return true;
-      }
+      return true;
     }
   }
 
@@ -85,10 +113,10 @@ export function isUtilityForm(element: Element): boolean {
 }
 
 const CHAT_OR_COMPOSER_PATTERNS =
-  /\b(chat|thread|conversation|composer|prompt-box|prompt-input|message-input|ai-box|chatbot|reply-box|comment-box|chat-input|chatbox|chat-window)\b/i;
+  /\b(chat|thread|conversation|composer|prompt-box|prompt-input|message-input|ai-box|chatbot|reply-box|comment-box|chat-input|chatbox|chat-window|ai-overview|generative-search|follow-up|searchbox|ask-box)\b/i;
 
 const CHAT_ACTION_PATTERNS =
-  /^(send|stop|regenerate|ask|attach|mic|new chat|prompt|ask gemini|ask copilot)$/i;
+  /^(send|stop|regenerate|ask|attach|mic|new chat|prompt|ask gemini|ask copilot|google search|search|ask a follow-up|ask follow-up)$/i;
 
 const EDITOR_CONTAINER_PATTERNS =
   /\b(canvas|designer|whiteboard|artboard|document-editor|design-editor|rich-text-editor|prosemirror|monaco-editor|ace_editor|ql-editor|canvas-container|page-container)\b/i;
@@ -133,12 +161,12 @@ export function isNonSubmissionContext(
     }
   }
 
-  // 2. Chat / AI prompt composer / Conversation box
+  // 2. Chat / AI prompt composer / Conversation box / AI Search Overviews
   const hasChatSemantics =
     CHAT_OR_COMPOSER_PATTERNS.test(idAndClass) ||
     Boolean(
       container.closest(
-        '[role="log"], [role="marquee"], [class*="chat" i], [class*="thread" i], [class*="conversation" i], [class*="composer" i], [class*="prompt" i]',
+        '[role="log"], [role="marquee"], [class*="chat" i], [class*="thread" i], [class*="conversation" i], [class*="composer" i], [class*="prompt" i], [class*="search" i]',
       ),
     );
 
@@ -163,8 +191,8 @@ export function isNonSubmissionContext(
     }
   }
 
-  // Single prompt input + chat action (Send/Ask/Stop/Regenerate) without application structure
-  if (textInputs.length === 1 && fields.length <= 2 && hasChatAction && !hasApplicationFields) {
+  // Single prompt input + chat/search action (Send/Ask/Stop/Regenerate/Search) without application structure
+  if (textInputs.length <= 2 && fields.length <= 3 && hasChatAction && !hasApplicationFields) {
     return true;
   }
 

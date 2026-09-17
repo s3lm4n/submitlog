@@ -28,15 +28,17 @@ To deliver automatic autosave and reload protection, SubmitLog declares host per
 SubmitLog runs automatically on normal web pages so that whenever you fill out an application or submission form:
 
 1. It automatically arms local autosave without requiring you to open the extension popup or click a site-specific toggle.
-2. It safely restores your latest draft into blank fields if the page reloads (F5) or you navigate back.
-3. It powers the contextual field assistant (pencil icon) from your previously archived submissions.
+2. It remembers your answers in local drafts and Answer Memory without modifying the webpage on reload or navigation.
+3. It powers the contextual field assistant (pencil icon) so you can explicitly restore or fill saved answers with a single click.
 
 ### How We Protect Your Privacy With This Access
 
 - **Strict Form Scoping:** SubmitLog does **not** scrape or monitor every input on every webpage. The meaningful-form detector only activates autosave and assistant features when a genuine application, contact, or submission form is scored. Search bars (like Google Search), navigation controls, filter bars, and utility inputs are strictly ignored.
+- **Global Pause & Per-Site Controls:** You can pause SubmitLog globally at any time, or disable it on individual websites. When paused or disabled, all page scanning, DOM listeners, background processing, and assistant elements immediately stop.
+- **Built-in Safety Exclusions:** Search engines, conversational AI chatbots, webmail composers, document/design canvas editors, and dedicated login or checkout routes are rejected by default.
 - **No Access to Internal Browser Pages:** SubmitLog cannot and does not access browser-internal pages (`chrome://`, `edge://`, `brave://`, `about:`, or extension pages).
 - **All Data Remains Local:** Everything autosaved or captured is written directly to your browser's private IndexedDB on your machine. Zero bytes leave your device.
-- **Strict Incognito / Private Browsing Guard:** All autosave, draft restore, capture, and assistant features are strictly disabled in Incognito / Private Browsing windows.
+- **Strict Incognito / Private Browsing Guard:** All autosave, draft storage, capture, and assistant features are strictly disabled in Incognito / Private Browsing windows.
 
 ---
 
@@ -54,6 +56,7 @@ SubmitLog maintains a strict architectural boundary between two distinct data st
 ### 2. Draft Autosave (`drafts` store)
 
 - Automatically saves in-progress form drafts continuously as you type, surviving tab close, reload (F5), and browser restart.
+- **User-Initiated Page Modification Only:** SubmitLog **never** automatically writes saved draft values back into a webpage after reload (F5), navigation, or restart. Webpage form fields are left completely untouched until you explicitly click the pencil assistant or trigger a fill action.
 - Uses a last-write-wins model where the most recent revision is authoritative per form identity (`origin|pathname|formFingerprint`).
 - Stored exclusively in extension-owned storage (never in the visited site's `localStorage` or `sessionStorage`).
 - **Separation Guarantee:** Clearing an active draft **never** deletes or alters Archive submissions. Deleting an Archive submission never deletes unrelated active drafts.

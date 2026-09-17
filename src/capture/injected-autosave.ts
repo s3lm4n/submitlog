@@ -513,9 +513,10 @@ export function injectedArmAutosave(options: ArmAutosaveOptions): { success: boo
 
 /**
  * Disarms and removes autosave listeners from the current page.
+ * @param shouldFlush If true, flushes any pending edits before disarming. If false (e.g. on pause), drops pending edits.
  */
-export function injectedDisarmAutosave(): { success: boolean } {
-  if (typeof window.__submitlog_autosave_flush === 'function') {
+export function injectedDisarmAutosave(shouldFlush = true): { success: boolean } {
+  if (shouldFlush && typeof window.__submitlog_autosave_flush === 'function') {
     window.__submitlog_autosave_flush();
   }
   if (typeof window.__submitlog_autosave_cleanup === 'function') {

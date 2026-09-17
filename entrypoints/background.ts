@@ -10,11 +10,16 @@ import {
   handleSaveFieldFromAssistant,
   handleBootstrapAssistant,
 } from '../src/background/assistant-handler';
-import { createSubmissionRepository } from '../src/storage/submission-repository';
 import { createDraftRepository } from '../src/storage/draft-repository';
 import { buildDraftId } from '../src/models/draft';
 import { setDraftTombstone, createTombstoneRepository } from '../src/storage/tombstone-registry';
-import { injectedFillForm, type SavedAnswerToFill } from '../src/capture/injected-fill';
+import {
+  isGlobalEnabled,
+  setGlobalEnabled,
+  isSiteDisabled,
+  setSiteDisabled,
+  getEffectiveState,
+} from '../src/storage/site-settings';
 
 export default defineBackground(() => {
   // 1. Startup: draft cleanup (30-day retention policy), duplicate migration & tombstone cleanup
@@ -29,8 +34,82 @@ export default defineBackground(() => {
     // DB initializes on demand
   }
 
+  function broadcastToTabs(msg: unknown): void {
+    try {
+      browser.tabs
+        .query({})
+        .then((tabs) => {
+          for (const tab of tabs) {
+            if (tab.id) {
+              browser.tabs.sendMessage(tab.id, msg).catch(() => {});
+            }
+          }
+        })
+        .catch(() => {});
+    } catch {
+      // ignore
+    }
+  }
+
   // 2. Runtime messaging router
   browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    // ------------------------------------------------------------------------
+    // Global & Site State Management Messages
+    // ------------------------------------------------------------------------
+    if (message?.type === 'SUBMITLOG_SET_GLOBAL_ENABLED') {
+      const enabled = Boolean(message.payload?.enabled);
+      setGlobalEnabled(enabled)
+        .then(() => {
+          broadcastToTabs({
+            type: 'SUBMITLOG_GLOBAL_STATE_CHANGED',
+            payload: { enabled },
+          });
+          sendResponse({ success: true, enabled });
+        })
+        .catch((err) => sendResponse({ success: false, error: String(err) }));
+      return true;
+    }
+
+    if (message?.type === 'SUBMITLOG_GET_GLOBAL_ENABLED') {
+      isGlobalEnabled()
+        .then((enabled) => sendResponse({ enabled }))
+        .catch(() => sendResponse({ enabled: true }));
+      return true;
+    }
+
+    if (message?.type === 'SUBMITLOG_SET_SITE_DISABLED') {
+      const { hostname, disabled } = message.payload || {};
+      setSiteDisabled(hostname, Boolean(disabled))
+        .then(() => {
+          broadcastToTabs({
+            type: 'SUBMITLOG_SITE_STATE_CHANGED',
+            payload: { hostname, disabled: Boolean(disabled) },
+          });
+          sendResponse({ success: true, hostname, disabled: Boolean(disabled) });
+        })
+        .catch((err) => sendResponse({ success: false, error: String(err) }));
+      return true;
+    }
+
+    if (message?.type === 'SUBMITLOG_IS_SITE_DISABLED') {
+      const { hostname } = message.payload || {};
+      isSiteDisabled(hostname)
+        .then((disabled) => sendResponse({ disabled }))
+        .catch(() => sendResponse({ disabled: false }));
+      return true;
+    }
+
+    if (message?.type === 'SUBMITLOG_GET_EFFECTIVE_STATE') {
+      const { hostname, pathname } = message.payload || {};
+      getEffectiveState(hostname, pathname)
+        .then((state) => sendResponse({ state }))
+        .catch(() => sendResponse({ state: 'active' }));
+      return true;
+    }
+
+    // ------------------------------------------------------------------------
+    // Form Autosave Field
+    // ------------------------------------------------------------------------
     if (message?.type === 'SUBMITLOG_AUTOSAVE_FIELD') {
       const isIncognito = Boolean(sender.tab?.incognito);
       if (isIncognito) {
@@ -38,26 +117,47 @@ export default defineBackground(() => {
         return true;
       }
 
-      handleAutosaveMessage(message.payload, undefined, isIncognito)
-        .then((result) => {
-          sendResponse(result);
-          try {
-            browser.runtime
-              .sendMessage({
-                type: 'SUBMITLOG_AUTOSAVE_NOTIFY',
-                result,
-              })
-              .catch(() => {
-                // Popup might not be open - ignore quietly
-              });
-          } catch {
-            // Popup not open
+      const hostname = message.payload?.hostname || '';
+      const pathname = message.payload?.pathname || '';
+
+      getEffectiveState(hostname, pathname)
+        .then((state) => {
+          if (state === 'global_paused') {
+            sendResponse({ status: 'paused', paused: true });
+            return;
           }
+          if (state === 'site_disabled') {
+            sendResponse({ status: 'site_disabled', siteDisabled: true });
+            return;
+          }
+          if (state === 'excluded_context') {
+            sendResponse({ status: 'excluded_context', excluded: true });
+            return;
+          }
+
+          return handleAutosaveMessage(message.payload, undefined, isIncognito).then((result) => {
+            sendResponse(result);
+            try {
+              browser.runtime
+                .sendMessage({
+                  type: 'SUBMITLOG_AUTOSAVE_NOTIFY',
+                  result,
+                })
+                .catch(() => {
+                  // Popup might not be open - ignore quietly
+                });
+            } catch {
+              // Popup not open
+            }
+          });
         })
         .catch((err) => sendResponse({ status: 'error', error: String(err) }));
       return true;
     }
 
+    // ------------------------------------------------------------------------
+    // Draft Retrieval
+    // ------------------------------------------------------------------------
     if (message?.type === 'SUBMITLOG_GET_DRAFT') {
       const isIncognito = Boolean(sender.tab?.incognito);
       if (isIncognito) {
@@ -66,8 +166,23 @@ export default defineBackground(() => {
       }
 
       const { origin, pathname, formFingerprint, formFamilyKey } = message.payload || {};
-      handleGetDraft(origin, pathname, formFamilyKey || formFingerprint)
-        .then((draft) => sendResponse({ draft }))
+      let host = '';
+      try {
+        host = origin ? new URL(origin).hostname : '';
+      } catch {
+        host = origin || '';
+      }
+
+      getEffectiveState(host, pathname)
+        .then((state) => {
+          if (state !== 'active') {
+            sendResponse({ draft: null });
+            return;
+          }
+          return handleGetDraft(origin, pathname, formFamilyKey || formFingerprint).then((draft) =>
+            sendResponse({ draft }),
+          );
+        })
         .catch(() => sendResponse({ draft: null }));
       return true;
     }
@@ -104,30 +219,18 @@ export default defineBackground(() => {
       }
 
       // Broadcast to active tabs to cancel pending flushes and mark draft as deleted
-      try {
-        browser.tabs
-          .query({})
-          .then((tabs) => {
-            for (const tab of tabs) {
-              if (tab.id) {
-                browser.tabs
-                  .sendMessage(tab.id, {
-                    type: 'SUBMITLOG_DRAFT_DELETED',
-                    payload: { stableDraftId, origin, pathname },
-                  })
-                  .catch(() => {});
-              }
-            }
-          })
-          .catch(() => {});
-      } catch {
-        // ignore
-      }
+      broadcastToTabs({
+        type: 'SUBMITLOG_DRAFT_DELETED',
+        payload: { stableDraftId, origin, pathname },
+      });
 
       sendResponse({ status: 'deleted' });
       return true;
     }
 
+    // ------------------------------------------------------------------------
+    // Assistant Handlers
+    // ------------------------------------------------------------------------
     if (message?.type === 'SUBMITLOG_BOOTSTRAP_ASSISTANT') {
       const isIncognito = Boolean(sender.tab?.incognito);
       if (isIncognito) {
@@ -135,8 +238,26 @@ export default defineBackground(() => {
         return true;
       }
 
-      handleBootstrapAssistant(message.payload, undefined, isIncognito)
-        .then((result) => sendResponse(result))
+      const hostname = message.payload?.hostname || '';
+      getEffectiveState(hostname)
+        .then((state) => {
+          if (state === 'global_paused') {
+            sendResponse({ availableAnswers: {}, paused: true });
+            return;
+          }
+          if (state === 'site_disabled') {
+            sendResponse({ availableAnswers: {}, siteDisabled: true });
+            return;
+          }
+          if (state === 'excluded_context') {
+            sendResponse({ availableAnswers: {}, excluded: true });
+            return;
+          }
+
+          return handleBootstrapAssistant(message.payload, undefined, isIncognito).then((result) =>
+            sendResponse(result),
+          );
+        })
         .catch((err) => sendResponse({ availableAnswers: {}, error: String(err) }));
       return true;
     }
@@ -153,8 +274,41 @@ export default defineBackground(() => {
         return true;
       }
 
-      handleGetFieldStatus(message.payload, undefined, isIncognito)
-        .then((result) => sendResponse(result))
+      const hostname = message.payload?.hostname || '';
+      getEffectiveState(hostname)
+        .then((state) => {
+          if (state === 'global_paused') {
+            sendResponse({
+              savedAnswer: '',
+              hasOtherSavedAnswers: false,
+              totalSavedAnswers: 0,
+              paused: true,
+            });
+            return;
+          }
+          if (state === 'site_disabled') {
+            sendResponse({
+              savedAnswer: '',
+              hasOtherSavedAnswers: false,
+              totalSavedAnswers: 0,
+              siteDisabled: true,
+            });
+            return;
+          }
+          if (state === 'excluded_context') {
+            sendResponse({
+              savedAnswer: '',
+              hasOtherSavedAnswers: false,
+              totalSavedAnswers: 0,
+              excluded: true,
+            });
+            return;
+          }
+
+          return handleGetFieldStatus(message.payload, undefined, isIncognito).then((result) =>
+            sendResponse(result),
+          );
+        })
         .catch((err) =>
           sendResponse({
             savedAnswer: '',
@@ -173,8 +327,17 @@ export default defineBackground(() => {
         return true;
       }
 
-      handleSaveFieldFromAssistant(message.payload, undefined, isIncognito)
-        .then((result) => sendResponse(result))
+      const hostname = message.payload?.hostname || '';
+      getEffectiveState(hostname)
+        .then((state) => {
+          if (state !== 'active') {
+            sendResponse({ status: state });
+            return;
+          }
+          return handleSaveFieldFromAssistant(message.payload, undefined, isIncognito).then(
+            (result) => sendResponse(result),
+          );
+        })
         .catch((err) => sendResponse({ status: 'error', error: String(err) }));
       return true;
     }
@@ -184,45 +347,6 @@ export default defineBackground(() => {
       browser.tabs.create({ url });
       sendResponse({ success: true });
       return true;
-    }
-
-    if (message?.type === 'SUBMITLOG_TRIGGER_FILL_ALL') {
-      const isIncognito = Boolean(sender.tab?.incognito);
-      if (isIncognito) {
-        sendResponse({ success: false, reason: 'private_browsing_blocked' });
-        return true;
-      }
-
-      const hostname = message.payload?.hostname;
-      const tabId = sender.tab?.id;
-      if (tabId && hostname) {
-        const repo = createSubmissionRepository();
-        repo
-          .getAll()
-          .then(async (subs) => {
-            const match = subs.find((s) => s.hostname.toLowerCase() === hostname.toLowerCase());
-            if (match) {
-              const savedAnswers: SavedAnswerToFill[] = match.fields
-                .filter((f) => !f.excluded && f.value.trim() !== '')
-                .map((f) => ({
-                  label: f.label,
-                  value: f.value,
-                  fieldType: f.fieldType,
-                }));
-
-              await browser.scripting.executeScript({
-                target: { tabId },
-                func: injectedFillForm,
-                args: [{ savedAnswers }],
-              });
-              sendResponse({ success: true, count: savedAnswers.length });
-            } else {
-              sendResponse({ success: false, count: 0 });
-            }
-          })
-          .catch((err) => sendResponse({ success: false, error: String(err) }));
-        return true;
-      }
     }
   });
 });

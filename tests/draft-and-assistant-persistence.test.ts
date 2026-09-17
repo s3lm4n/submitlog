@@ -34,7 +34,7 @@ vi.mock('wxt/browser', () => {
 });
 
 import { injectedArmAutosave } from '../src/capture/injected-autosave';
-import { injectedRestoreDraft, type RestoreDraftOptions } from '../src/capture/injected-restore';
+
 import {
   handleAutosaveMessage,
   isFieldSensitive,
@@ -623,10 +623,38 @@ describe('USABILITY & PERSISTENCE ENGINE (Sections A through I)', () => {
   });
 
   // ==========================================================================
-  // E. Restore safety
+  // E. Restore safety & explicit user-initiated fill
   // ==========================================================================
-  describe('E. Restore safety', () => {
-    it('restores empty matching text field and emits framework-compatible input and change events', () => {
+  describe('E. Restore safety & explicit user-initiated fill', () => {
+    it('leaves fields untouched on page bootstrap even when a matching draft exists', async () => {
+      const origin = 'https://apply.techventures.org';
+      const pathname = '/start';
+      const fp = 'fp-test-form';
+
+      // Seed draft repository with a saved draft
+      const draft: FormDraft = {
+        id: buildDraftId(origin, pathname, fp),
+        schemaVersion: DRAFT_SCHEMA_VERSION,
+        origin,
+        hostname: 'apply.techventures.org',
+        pathname,
+        pageTitle: 'Tech Application',
+        pageUrl: `${origin}${pathname}`,
+        formFingerprint: fp,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        fields: {
+          company: {
+            id: 'c1',
+            label: 'Company',
+            value: 'DeepMind Applied',
+            fieldType: 'text',
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      };
+      await draftRepo.save(draft);
+
       document.body.innerHTML = `
         <form>
           <label for="company">Company</label>
@@ -634,37 +662,43 @@ describe('USABILITY & PERSISTENCE ENGINE (Sections A through I)', () => {
         </form>
       `;
 
-      let inputDispatched = false;
-      let changeDispatched = false;
+      // Verify draft exists in storage
+      const existingDraft = await draftRepo.getByForm(origin, pathname, fp);
+      expect(existingDraft).toBeDefined();
+
+      // On page bootstrap/reload, SubmitLog does NOT automatically write draft values into DOM
       const input = document.getElementById('company') as HTMLInputElement;
-
-      input.addEventListener('input', (e) => {
-        if (e.bubbles) inputDispatched = true;
-      });
-      input.addEventListener('change', (e) => {
-        if (e.bubbles) changeDispatched = true;
-      });
-
-      const options: RestoreDraftOptions = {
-        draftFields: {
-          company: {
-            label: 'Company',
-            value: 'DeepMind Applied',
-            fieldType: 'text',
-          },
-        },
-        showIndicator: false,
-      };
-
-      const result = injectedRestoreDraft(options);
-
-      expect(result.restoredCount).toBe(1);
-      expect(input.value).toBe('DeepMind Applied');
-      expect(inputDispatched).toBe(true);
-      expect(changeDispatched).toBe(true);
+      expect(input.value).toBe('');
     });
 
-    it('never overwrites non-empty user-entered value unless identical', () => {
+    it('never touches or overwrites existing webpage values on bootstrap', async () => {
+      const origin = 'https://apply.techventures.org';
+      const pathname = '/start';
+      const fp = 'fp-test-form';
+
+      const draft: FormDraft = {
+        id: buildDraftId(origin, pathname, fp),
+        schemaVersion: DRAFT_SCHEMA_VERSION,
+        origin,
+        hostname: 'apply.techventures.org',
+        pathname,
+        pageTitle: 'Tech Application',
+        pageUrl: `${origin}${pathname}`,
+        formFingerprint: fp,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        fields: {
+          headline: {
+            id: 'h1',
+            label: 'Headline',
+            value: 'Old Draft Headline',
+            fieldType: 'text',
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      };
+      await draftRepo.save(draft);
+
       document.body.innerHTML = `
         <form>
           <label for="headline">Headline</label>
@@ -674,97 +708,173 @@ describe('USABILITY & PERSISTENCE ENGINE (Sections A through I)', () => {
 
       const input = document.getElementById('headline') as HTMLInputElement;
 
-      const options: RestoreDraftOptions = {
-        draftFields: {
-          headline: {
-            label: 'Headline',
-            value: 'Old Draft Headline',
-            fieldType: 'text',
-          },
-        },
-        showIndicator: false,
-      };
-
-      const result = injectedRestoreDraft(options);
-
-      expect(result.restoredCount).toBe(0);
-      expect(result.skippedCount).toBe(1);
+      // Existing value remains untouched on reload/bootstrap
       expect(input.value).toBe('User Typed Custom Headline');
     });
 
-    it('safely restores select, checkbox, and radio without overwriting existing selections', () => {
+    it('restores saved answer upon explicit user pencil interaction and emits events', async () => {
       document.body.innerHTML = `
         <form>
-          <!-- Empty select (at default index 0) -->
-          <label for="role">Role</label>
-          <select id="role">
-            <option value="">Choose role...</option>
-            <option value="lead">Tech Lead</option>
-            <option value="mgr">Engineering Manager</option>
-          </select>
-
-          <!-- Checkbox -->
-          <label for="newsletter">
-            <input type="checkbox" id="newsletter" />
-            Subscribe to newsletter
-          </label>
-
-          <!-- Radio group -->
-          <fieldset>
-            <legend>Employment Type</legend>
-            <label><input type="radio" name="empType" value="contract" /> Contractor</label>
-            <label><input type="radio" name="empType" value="fulltime" /> Full-Time</label>
-          </fieldset>
+          <label for="company">Company</label>
+          <input id="company" type="text" value="" />
         </form>
       `;
 
-      const options: RestoreDraftOptions = {
-        draftFields: {
-          role: { label: 'Role', value: 'Tech Lead', fieldType: 'select' },
-          newsletter: { label: 'Subscribe to newsletter', value: 'Checked', fieldType: 'checkbox' },
-          employment: { label: 'Employment Type', value: 'Full-Time', fieldType: 'radio' },
-        },
-        showIndicator: false,
+      const mockSendMessage = vi.fn((msg: unknown, cb?: (res: unknown) => void) => {
+        const m = msg as { type: string; payload: unknown };
+        if (m.type === 'SUBMITLOG_GET_FIELD_STATUS') {
+          const res = {
+            savedAnswer: 'DeepMind Applied',
+            totalSavedAnswers: 1,
+            hasOtherSavedAnswers: false,
+          };
+          if (cb) cb(res);
+          return Promise.resolve(res);
+        }
+        if (cb) cb({});
+        return Promise.resolve({});
+      });
+
+      const mockRuntime = { sendMessage: mockSendMessage };
+      (window as unknown as { chrome: unknown; browser: unknown }).chrome = {
+        runtime: mockRuntime,
+      };
+      (window as unknown as { chrome: unknown; browser: unknown }).browser = {
+        runtime: mockRuntime,
+      };
+      (globalThis as unknown as { chrome: unknown; browser: unknown }).chrome = {
+        runtime: mockRuntime,
+      };
+      (globalThis as unknown as { chrome: unknown; browser: unknown }).browser = {
+        runtime: mockRuntime,
       };
 
-      const result = injectedRestoreDraft(options);
+      initFieldAssistant();
 
-      expect(result.restoredCount).toBe(3);
+      const input = document.getElementById('company') as HTMLInputElement;
+      input.focus();
+      input.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
 
-      const select = document.getElementById('role') as HTMLSelectElement;
-      expect(select.selectedIndex).toBe(1);
+      await vi.advanceTimersByTimeAsync(150);
 
-      const checkbox = document.getElementById('newsletter') as HTMLInputElement;
-      expect(checkbox.checked).toBe(true);
+      const root = document.getElementById('submitlog-assistant-root');
+      expect(root).not.toBeNull();
+      const shadow = root?.shadowRoot;
+      const trigger = shadow?.getElementById('trigger') as HTMLButtonElement;
+      expect(trigger).not.toBeNull();
 
-      const radio = document.querySelector<HTMLInputElement>('input[value="fulltime"]');
-      expect(radio?.checked).toBe(true);
+      let inputDispatched = false;
+      let changeDispatched = false;
+      input.addEventListener('input', (e) => {
+        if (e.bubbles) inputDispatched = true;
+      });
+      input.addEventListener('change', (e) => {
+        if (e.bubbles) changeDispatched = true;
+      });
+
+      // User explicitly clicks pencil to restore saved answer
+      trigger.click();
+
+      expect(input.value).toBe('DeepMind Applied');
+      expect(inputDispatched).toBe(true);
+      expect(changeDispatched).toBe(true);
     });
 
-    it('never restores sensitive password or card fields', () => {
+    it('replaces pre-filled value with saved answer upon explicit user pencil interaction', async () => {
+      document.body.innerHTML = `
+        <form>
+          <label for="headline">Headline</label>
+          <input id="headline" type="text" value="User Typed Custom Headline" />
+        </form>
+      `;
+
+      const mockSendMessage = vi.fn((msg: unknown, cb?: (res: unknown) => void) => {
+        const m = msg as { type: string; payload: unknown };
+        if (m.type === 'SUBMITLOG_GET_FIELD_STATUS') {
+          const res = {
+            savedAnswer: 'Saved Headline From Archive',
+            totalSavedAnswers: 1,
+            hasOtherSavedAnswers: false,
+          };
+          if (cb) cb(res);
+          return Promise.resolve(res);
+        }
+        if (cb) cb({});
+        return Promise.resolve({});
+      });
+
+      const mockRuntime = { sendMessage: mockSendMessage };
+      (window as unknown as { chrome: unknown; browser: unknown }).chrome = {
+        runtime: mockRuntime,
+      };
+      (window as unknown as { chrome: unknown; browser: unknown }).browser = {
+        runtime: mockRuntime,
+      };
+      (globalThis as unknown as { chrome: unknown; browser: unknown }).chrome = {
+        runtime: mockRuntime,
+      };
+      (globalThis as unknown as { chrome: unknown; browser: unknown }).browser = {
+        runtime: mockRuntime,
+      };
+
+      initFieldAssistant();
+
+      const input = document.getElementById('headline') as HTMLInputElement;
+      expect(input.value).toBe('User Typed Custom Headline');
+
+      input.focus();
+      input.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+
+      await vi.advanceTimersByTimeAsync(150);
+
+      const root = document.getElementById('submitlog-assistant-root');
+      const shadow = root?.shadowRoot;
+      const trigger = shadow?.getElementById('trigger') as HTMLButtonElement;
+      expect(trigger).not.toBeNull();
+
+      // Explicit user click replaces pre-filled value with the saved answer
+      trigger.click();
+
+      expect(input.value).toBe('Saved Headline From Archive');
+    });
+
+    it('never attaches pencil assistant to sensitive fields and sensitive fields are never populated', async () => {
       document.body.innerHTML = `
         <form>
           <label for="pwd">Password</label>
           <input type="password" id="pwd" />
+          <label for="cvv">CVV</label>
+          <input id="cvv" name="cvv" type="text" />
         </form>
       `;
 
-      const input = document.getElementById('pwd') as HTMLInputElement;
+      const pwd = document.getElementById('pwd') as HTMLInputElement;
+      const cvv = document.getElementById('cvv') as HTMLInputElement;
 
-      const options: RestoreDraftOptions = {
-        draftFields: {
-          password: {
-            label: 'Password',
-            value: 'RestoredSecret123',
-            fieldType: 'password',
-          },
-        },
-        showIndicator: false,
-      };
+      expect(isFieldSensitive(pwd)).toBe(true);
+      expect(isFieldSensitive(cvv)).toBe(true);
 
-      const res = injectedRestoreDraft(options);
-      expect(res.restoredCount).toBe(0);
-      expect(input.value).toBe('');
+      initFieldAssistant();
+
+      pwd.focus();
+      pwd.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+
+      await vi.advanceTimersByTimeAsync(150);
+
+      const root = document.getElementById('submitlog-assistant-root');
+      const shadow = root?.shadowRoot;
+      const container = shadow?.getElementById('container') as HTMLElement;
+
+      expect(container.classList.contains('visible')).toBe(false);
+      expect(pwd.value).toBe('');
+
+      cvv.focus();
+      cvv.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+
+      await vi.advanceTimersByTimeAsync(150);
+
+      expect(container.classList.contains('visible')).toBe(false);
+      expect(cvv.value).toBe('');
     });
   });
 

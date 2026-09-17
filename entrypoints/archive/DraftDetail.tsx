@@ -4,6 +4,29 @@ import { SCHEMA_VERSION, type Submission, type CapturedField } from '../../src/m
 import { generateId } from '../../src/utils/id';
 import { createSubmissionRepository } from '../../src/storage/submission-repository';
 
+import { Button } from '@/components/ui/button';
+import { Card, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogAction,
+  AlertDialogCancel,
+} from '@/components/ui/alert-dialog';
+import {
+  ArrowLeft,
+  Copy,
+  Check,
+  Trash2,
+  ExternalLink,
+  Info,
+  Archive as ArchiveIcon,
+} from 'lucide-react';
+
 interface Props {
   draft: FormDraft;
   onBack: () => void;
@@ -14,6 +37,7 @@ interface Props {
 export function DraftDetail({ draft, onBack, onDelete, onConverted }: Props) {
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
   const [isConverting, setIsConverting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   async function copyToClipboard(text: string, feedbackId: string) {
     try {
@@ -87,86 +111,174 @@ export function DraftDetail({ draft, onBack, onDelete, onConverted }: Props) {
   const fieldsList = Object.values(draft.fields);
 
   return (
-    <div className="archive-container">
-      <header className="archive-header detail-header">
-        <div className="header-content">
-          <button onClick={onBack} className="btn btn-secondary back-btn">
-            Back to List
-          </button>
-
-          <div className="title-section">
-            <div className="title-display">
-              <h1>{draft.pageTitle || draft.hostname}</h1>
-              <span className="badge badge-draft">Draft (In Progress)</span>
-            </div>
-            <div className="meta-info">
-              <a href={draft.pageUrl} target="_blank" rel="noreferrer" className="url-link">
-                {draft.hostname}
-              </a>
-              <span className="dot">&middot;</span>
-              <span>Last saved: {new Date(draft.updatedAt).toLocaleString()}</span>
-              <span className="dot">&middot;</span>
-              <span>{fieldsList.length} saved fields</span>
-            </div>
+    <div className="min-h-screen bg-background text-foreground flex flex-col">
+      {/* Header */}
+      <header className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur-xs">
+        <div className="max-w-4xl mx-auto px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <Button variant="ghost" size="sm" onClick={onBack} className="h-8 gap-1.5 px-2 text-xs">
+              <ArrowLeft className="size-3.5" />
+              <span>Back to Archive</span>
+            </Button>
+            <Badge variant="draft" className="text-xs">
+              Draft (In Progress)
+            </Badge>
           </div>
 
-          <div className="header-actions">
-            <button onClick={handleCopyAllMarkdown} className="btn btn-secondary">
-              {copyFeedback === 'all-md' ? '✓ Copied' : 'Copy as Markdown'}
-            </button>
-            <button
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleCopyAllMarkdown}
+              className="h-8 text-xs gap-1.5"
+            >
+              {copyFeedback === 'all-md' ? (
+                <Check className="size-3.5 text-emerald-600" />
+              ) : (
+                <Copy className="size-3.5" />
+              )}
+              <span>{copyFeedback === 'all-md' ? 'Copied' : 'Copy as Markdown'}</span>
+            </Button>
+            <Button
+              variant="default"
+              size="sm"
               onClick={handleConvertToSubmission}
               disabled={isConverting}
-              className="btn btn-primary"
+              className="h-8 text-xs gap-1.5 font-medium"
             >
-              {isConverting ? 'Saving...' : 'Save to Archive'}
-            </button>
-            <button onClick={onDelete} className="btn btn-danger">
-              Delete Draft
-            </button>
+              <ArchiveIcon className="size-3.5" />
+              <span>{isConverting ? 'Saving...' : 'Save as submission'}</span>
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowDeleteConfirm(true)}
+              className="h-8 px-2 text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+              title="Delete draft"
+            >
+              <Trash2 className="size-3.5" />
+            </Button>
           </div>
         </div>
       </header>
 
-      <main className="archive-main detail-main">
-        <div className="draft-notice-banner">
-          <span className="notice-icon">ℹ️</span>
-          <span>
-            This is an in-progress autosaved draft. It updates automatically as you complete form
-            fields and has not yet been marked as submitted.
-          </span>
-        </div>
+      {/* Main Detail Content */}
+      <main className="flex-1 max-w-4xl w-full mx-auto px-6 py-8 space-y-6">
+        {/* Title & Metadata Card */}
+        <Card className="p-6 space-y-3">
+          <CardTitle className="text-xl font-bold tracking-tight text-foreground">
+            {draft.pageTitle || draft.hostname}
+          </CardTitle>
 
-        <div className="fields-container">
-          <h2>Draft Answers ({fieldsList.length})</h2>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            <a
+              href={draft.pageUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-1 font-mono hover:text-primary transition-colors"
+            >
+              <span>{draft.hostname}</span>
+              <ExternalLink className="size-3" />
+            </a>
+            <span>·</span>
+            <span>Last saved {new Date(draft.updatedAt).toLocaleString()}</span>
+            <span>·</span>
+            <span>
+              {fieldsList.length} saved {fieldsList.length === 1 ? 'answer' : 'answers'}
+            </span>
+          </div>
+
+          <div className="flex items-start gap-2 rounded-md bg-amber-500/10 border border-amber-500/20 p-3 text-xs text-amber-800 dark:text-amber-300">
+            <Info className="size-4 shrink-0 mt-0.5" />
+            <p className="leading-relaxed">
+              This is an in-progress autosaved working draft. It updates automatically as you type
+              in form fields and remains separate from explicit snapshots in your Archive.
+            </p>
+          </div>
+        </Card>
+
+        {/* Q&A Cards */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold tracking-tight text-foreground uppercase tracking-wider text-xs">
+              Saved Answers ({fieldsList.length})
+            </h2>
+          </div>
+
           {fieldsList.length === 0 ? (
-            <div className="empty-fields">No answers saved in this draft.</div>
+            <Card className="p-8 text-center text-xs text-muted-foreground">
+              No answers saved in this draft.
+            </Card>
           ) : (
-            <div className="fields-list">
-              {fieldsList.map((f, idx) => (
-                <div key={f.id || idx} className="field-card">
-                  <div className="field-header">
-                    <span className="field-label">{f.label}</span>
-                    <button
-                      onClick={() => copyToClipboard(f.value, `field-${idx}`)}
-                      className="btn btn-sm btn-secondary copy-field-btn"
-                    >
-                      {copyFeedback === `field-${idx}` ? '✓ Copied' : 'Copy'}
-                    </button>
-                  </div>
-                  <div className="field-value">{f.value}</div>
-                  <div className="field-meta">
-                    <span className="field-type-badge">{f.fieldType}</span>
-                    <span className="field-updated-time">
-                      Saved {new Date(f.updatedAt).toLocaleTimeString()}
-                    </span>
-                  </div>
-                </div>
-              ))}
+            <div className="space-y-2.5">
+              {fieldsList.map((f, idx) => {
+                const feedbackKey = `field-${idx}`;
+                return (
+                  <Card
+                    key={f.id || idx}
+                    className="p-4 space-y-2 hover:border-primary/40 transition-colors"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="text-xs font-semibold text-foreground/90 leading-snug">
+                        {f.label}
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => copyToClipboard(f.value, feedbackKey)}
+                        className="h-6 px-2 text-[11px] gap-1 shrink-0 text-muted-foreground hover:text-foreground"
+                      >
+                        {copyFeedback === feedbackKey ? (
+                          <Check className="size-3 text-emerald-600" />
+                        ) : (
+                          <Copy className="size-3" />
+                        )}
+                        <span>{copyFeedback === feedbackKey ? 'Copied' : 'Copy'}</span>
+                      </Button>
+                    </div>
+
+                    <div className="text-xs text-foreground font-mono bg-muted/30 p-2.5 rounded-md break-words whitespace-pre-wrap">
+                      {f.value || <span className="italic text-muted-foreground/60">(empty)</span>}
+                    </div>
+
+                    <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-1">
+                      <Badge variant="outline" className="text-[10px] h-4 font-mono font-normal">
+                        {f.fieldType}
+                      </Badge>
+                      <span>Saved {new Date(f.updatedAt).toLocaleTimeString()}</span>
+                    </div>
+                  </Card>
+                );
+              })}
             </div>
           )}
         </div>
       </main>
+
+      {/* Delete Confirmation Alert Dialog */}
+      <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete draft?</AlertDialogTitle>
+            <AlertDialogDescription className="text-xs leading-relaxed">
+              This removes the locally autosaved working draft for &quot;
+              {draft.pageTitle || draft.hostname}&quot;. Saved submissions are not affected.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                setShowDeleteConfirm(false);
+                onDelete();
+              }}
+            >
+              Delete draft
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

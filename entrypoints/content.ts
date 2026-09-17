@@ -1,10 +1,10 @@
 import { defineContentScript } from 'wxt/utils/define-content-script';
 import { scanPageForms, type InjectedScanResult } from '../src/capture/injected-capture';
 import { computeFormFingerprint } from '../src/matching/form-fingerprint';
-import { injectedArmAutosave } from '../src/capture/injected-autosave';
-import { injectedRestoreDraft } from '../src/capture/injected-restore';
-import { initFieldAssistant } from '../src/assistant/injected-assistant';
-import { normalizeDraftPathname, type FormDraft } from '../src/models/draft';
+import { injectedArmAutosave, injectedDisarmAutosave } from '../src/capture/injected-autosave';
+import { initFieldAssistant, disarmFieldAssistant } from '../src/assistant/injected-assistant';
+import { normalizeDraftPathname } from '../src/models/draft';
+import { getEffectiveState, normalizeHostname } from '../src/storage/site-settings';
 
 export default defineContentScript({
   matches: ['http://*/*', 'https://*/*'],
@@ -25,38 +25,35 @@ export default defineContentScript({
 
     let currentFingerprint = '';
     let isArmed = false;
+    let observer: MutationObserver | null = null;
+    let observerTimer: ReturnType<typeof setTimeout> | null = null;
 
-    function safeSendMessage<T = unknown>(msg: unknown, callback?: (res: T) => void): void {
-      try {
-        const g = globalThis as unknown as {
-          browser?: {
-            runtime?: { sendMessage?: (m: unknown, c?: (r: unknown) => void) => Promise<unknown> };
-          };
-          chrome?: {
-            runtime?: { sendMessage?: (m: unknown, c?: (r: unknown) => void) => void };
-          };
-        };
-        const runtime = g.browser?.runtime || g.chrome?.runtime || null;
-        if (!runtime || typeof runtime.sendMessage !== 'function') return;
-
-        const promise: unknown = runtime.sendMessage(msg, (res) => {
-          try {
-            const _err = (runtime as unknown as { lastError?: unknown }).lastError;
-          } catch {
-            // ignore
-          }
-          if (callback) callback(res as T);
-        });
-
-        if (promise && typeof (promise as { catch?: unknown }).catch === 'function') {
-          (promise as Promise<unknown>).catch(() => {});
-        }
-      } catch {
-        // Extension context invalidated or reload in progress
+    function stopAllPageActivity() {
+      if (observer) {
+        observer.disconnect();
       }
+      if (observerTimer) {
+        clearTimeout(observerTimer);
+        observerTimer = null;
+      }
+      injectedDisarmAutosave(false); // Disarm without flushing pending keystrokes
+      disarmFieldAssistant();
+      currentFingerprint = '';
+      isArmed = false;
     }
 
-    function initPageAutosaveAndAssistant() {
+    function setupObserver() {
+      if (!document.body || observer) return;
+      observer = new MutationObserver(() => {
+        if (observerTimer) clearTimeout(observerTimer);
+        observerTimer = setTimeout(() => {
+          checkAndInitPage();
+        }, 250);
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    }
+
+    async function checkAndInitPage() {
       if (!document.body) return;
 
       const url = window.location.href;
@@ -73,10 +70,24 @@ export default defineContentScript({
       const hostname = parsedUrl.hostname;
       const pathname = normalizeDraftPathname(url);
 
-      // Step 1: Scan page forms
+      // Precedence check: global pause, user site disable, built-in exclusion
+      const effectiveState = await getEffectiveState(hostname, pathname);
+      if (effectiveState !== 'active') {
+        stopAllPageActivity();
+        return;
+      }
+
+      // Step 1: Scan page forms structurally
       const scan: InjectedScanResult = scanPageForms();
       if (!scan || !scan.formDetected || !scan.detectedFields || scan.detectedFields.length === 0) {
-        // No meaningful form detected (e.g. simple search bar)
+        // No meaningful form detected (e.g. search engine, utility UI, empty page)
+        if (isArmed) {
+          injectedDisarmAutosave(false);
+          disarmFieldAssistant();
+          currentFingerprint = '';
+          isArmed = false;
+        }
+        setupObserver();
         return;
       }
 
@@ -86,6 +97,7 @@ export default defineContentScript({
 
       // Avoid redundant re-arming if the form structure has not changed
       if (isArmed && formFingerprint === currentFingerprint) {
+        setupObserver();
         return;
       }
 
@@ -105,30 +117,16 @@ export default defineContentScript({
         initialFields: detectedFields,
       });
 
-      // Step 3: Retrieve active draft and restore into empty fields
-      safeSendMessage<{ draft: FormDraft | null }>(
-        {
-          type: 'SUBMITLOG_GET_DRAFT',
-          payload: { origin, pathname, formFingerprint, formFamilyKey },
-        },
-        (res) => {
-          if (res?.draft && res.draft.fields && Object.keys(res.draft.fields).length > 0) {
-            injectedRestoreDraft({
-              draftFields: res.draft.fields,
-              showIndicator: true,
-            });
-          }
-        },
-      );
-
-      // Step 4: Bootstrap one-click pencil assistant
+      // Step 3: Bootstrap one-click pencil assistant (user-initiated restore only)
       initFieldAssistant();
+
+      setupObserver();
     }
 
     // Run initial initialization
-    initPageAutosaveAndAssistant();
+    checkAndInitPage();
 
-    // Listen for draft deletion broadcast from background to prevent resurrection
+    // Runtime message listener for state changes and deletions
     try {
       const g = globalThis as unknown as {
         browser?: {
@@ -141,7 +139,44 @@ export default defineContentScript({
       const runtime = g.browser?.runtime || g.chrome?.runtime;
       if (runtime?.onMessage?.addListener) {
         runtime.onMessage.addListener((msg) => {
-          const m = msg as { type?: string; payload?: { origin?: string; pathname?: string } };
+          const m = msg as {
+            type?: string;
+            payload?: {
+              enabled?: boolean;
+              hostname?: string;
+              disabled?: boolean;
+              origin?: string;
+              pathname?: string;
+            };
+          };
+
+          // 1. Global pause broadcast
+          if (m?.type === 'SUBMITLOG_GLOBAL_STATE_CHANGED') {
+            const enabled = Boolean(m.payload?.enabled);
+            if (!enabled) {
+              stopAllPageActivity();
+            } else {
+              checkAndInitPage();
+            }
+            return;
+          }
+
+          // 2. Site disable broadcast
+          if (m?.type === 'SUBMITLOG_SITE_STATE_CHANGED') {
+            const { hostname: changedHost, disabled } = m.payload || {};
+            if (
+              normalizeHostname(changedHost || '') === normalizeHostname(window.location.hostname)
+            ) {
+              if (disabled) {
+                stopAllPageActivity();
+              } else {
+                checkAndInitPage();
+              }
+            }
+            return;
+          }
+
+          // 3. Draft deleted broadcast
           if (m?.type === 'SUBMITLOG_DRAFT_DELETED') {
             const { origin: delOrigin, pathname: delPath } = m.payload || {};
             const url = window.location.href;
@@ -167,22 +202,9 @@ export default defineContentScript({
       // ignore
     }
 
-    // Observe meaningful SPA DOM changes (with restrained 250ms debounce)
-    let observerTimer: ReturnType<typeof setTimeout> | null = null;
-    const observer = new MutationObserver(() => {
-      if (observerTimer) clearTimeout(observerTimer);
-      observerTimer = setTimeout(() => {
-        initPageAutosaveAndAssistant();
-      }, 250);
-    });
-
-    if (document.body) {
-      observer.observe(document.body, { childList: true, subtree: true });
-    }
-
     // SPA navigation listener (popstate)
     window.addEventListener('popstate', () => {
-      setTimeout(initPageAutosaveAndAssistant, 150);
+      setTimeout(checkAndInitPage, 150);
     });
   },
 });

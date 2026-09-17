@@ -1,7 +1,19 @@
 import { defineConfig } from 'wxt';
+import tailwindcss from '@tailwindcss/vite';
+import path from 'node:path';
 
 export default defineConfig({
   modules: ['@wxt-dev/module-react'],
+  vite: () => ({
+    plugins: [tailwindcss()],
+    resolve: {
+      alias: {
+        '@/components': path.resolve(__dirname, './src/components'),
+        '@/lib': path.resolve(__dirname, './src/lib'),
+        '@': path.resolve(__dirname, '.'),
+      },
+    },
+  }),
   manifest: ({ browser }) => {
     const baseManifest = {
       name: 'SubmitLog',

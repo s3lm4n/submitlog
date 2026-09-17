@@ -1,0 +1,73 @@
+<!doctype html>
+<!--
+  Realistic Google Search / AI Search page fixture.
+  Features:
+  - Search query box (textarea as used in modern Google Search)
+  - Search action buttons (Google Search, I'm Feeling Lucky)
+  - AI Overview surface with generative summary text
+  - Generative follow-up query textarea (Ask a follow-up)
+  - Follow-up send/ask action buttons
+  - No application fields (no email, tel, job, applicant, address, etc.)
+  
+  SubmitLog MUST structurally reject this page (formDetected: false, score < 30).
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>quantum computing algorithms - Google Search</title>
+  </head>
+  <body>
+    <!-- Header / Search bar -->
+    <header>
+      <div class="logo">Google</div>
+      <form action="/search" method="GET" role="search" id="top-search-form">
+        <div class="searchbox">
+          <textarea
+            name="q"
+            class="gLFyf"
+            aria-label="Search"
+            placeholder="Search Google or type a URL"
+            rows="1"
+          >
+quantum computing algorithms</textarea>
+          <button type="submit" aria-label="Google Search">Search</button>
+          <button type="button" aria-label="Search by voice">Mic</button>
+          <button type="button" aria-label="Search by image">Lens</button>
+        </div>
+      </form>
+    </header>
+
+    <!-- AI Overview / Generative Search Results Section -->
+    <main>
+      <section class="ai-overview-container" aria-label="AI Overview">
+        <div class="ai-overview-header">
+          <h2>AI Overview</h2>
+        </div>
+        <div class="ai-overview-content">
+          <p>
+            Quantum computing algorithms leverage superposition and entanglement to solve certain
+            computational problems faster than classical computers. Key examples include Shor's
+            algorithm for integer factorization and Grover's algorithm for database search.
+          </p>
+        </div>
+        <!-- Follow-up prompt composer inside AI overview -->
+        <div class="ai-followup-box">
+          <textarea
+            aria-label="Ask a follow up"
+            placeholder="Ask a follow up..."
+            rows="2"
+          ></textarea>
+          <button type="button" aria-label="Ask question">Ask</button>
+        </div>
+      </section>
+
+      <!-- Standard search results list -->
+      <div class="results-container">
+        <div class="result-item">
+          <h3>Quantum Algorithm Zoo</h3>
+          <p>A comprehensive catalog of quantum algorithms and their speedups.</p>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>

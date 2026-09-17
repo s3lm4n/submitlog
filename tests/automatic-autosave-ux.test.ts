@@ -50,8 +50,8 @@ import {
   injectedDisarmAutosave,
 } from '../src/capture/injected-autosave';
 import { scanPageForms } from '../src/capture/injected-capture';
-import { injectedRestoreDraft } from '../src/capture/injected-restore';
 import { initFieldAssistant, disarmFieldAssistant } from '../src/assistant/injected-assistant';
+
 import {
   handleAutosaveMessage,
   isFieldSensitive,
@@ -445,7 +445,7 @@ describe('AUTOMATIC AUTOSAVE UX & LAST-WRITE-WINS (Requirements A through L)', (
     };
     await draftRepo.save(draft);
 
-    // Simulate page reload (F5): fresh empty DOM
+    // Simulate page reload (F5): fresh empty DOM presented by website
     document.body.innerHTML = `
       <form>
         <label for="comp">Company Name</label>
@@ -455,28 +455,22 @@ describe('AUTOMATIC AUTOSAVE UX & LAST-WRITE-WINS (Requirements A through L)', (
       </form>
     `;
 
-    // Background reload listener restores draft automatically into empty fields
+    // Verify matching draft remains in storage
     const matchingDraft = await draftRepo.getByForm(origin, pathname, fp);
     expect(matchingDraft).toBeDefined();
 
-    const restoreRes = injectedRestoreDraft({
-      draftFields: matchingDraft!.fields,
-      showIndicator: false,
-    });
-
-    expect(restoreRes.restoredCount).toBe(2);
-
+    // In the new architecture: SubmitLog does NOT automatically write values into the DOM
     const compInput = document.getElementById('comp') as HTMLInputElement;
     const probInput = document.getElementById('prob') as HTMLTextAreaElement;
 
-    expect(compInput.value).toBe('OmniAI Inc');
-    expect(probInput.value).toBe('Data silos slow down clinical discovery');
+    expect(compInput.value).toBe('');
+    expect(probInput.value).toBe('');
   });
 
   // --------------------------------------------------------------------------
-  // F. Existing non-empty website values are never overwritten
+  // F. Existing non-empty website values are never overwritten automatically
   // --------------------------------------------------------------------------
-  it('F. Existing non-empty website values are never overwritten during draft restore', async () => {
+  it('F. Existing non-empty website values are never overwritten automatically', async () => {
     // Webpage already has a non-empty value restored by the site itself or typed by user
     document.body.innerHTML = `
       <form>
@@ -487,30 +481,12 @@ describe('AUTOMATIC AUTOSAVE UX & LAST-WRITE-WINS (Requirements A through L)', (
       </form>
     `;
 
-    const draftFields = {
-      company: {
-        label: 'Company',
-        value: 'Old Draft Company',
-        fieldType: 'text',
-      },
-      summary: {
-        label: 'Summary',
-        value: 'Restored Draft Summary',
-        fieldType: 'textarea',
-      },
-    };
-
-    const res = injectedRestoreDraft({ draftFields, showIndicator: false });
-
-    // Non-empty company field skipped; empty summary field restored
-    expect(res.restoredCount).toBe(1);
-    expect(res.skippedCount).toBe(1);
-
     const compInput = document.getElementById('company') as HTMLInputElement;
     const sumInput = document.getElementById('summary') as HTMLTextAreaElement;
 
+    // No automatic overwrite occurs on page load
     expect(compInput.value).toBe('Pre-filled By Website');
-    expect(sumInput.value).toBe('Restored Draft Summary');
+    expect(sumInput.value).toBe('');
   });
 
   // --------------------------------------------------------------------------

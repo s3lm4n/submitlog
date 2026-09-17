@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <!-- Rounded-square tile: deep charcoal background with subtle border -->
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="#0d1117" stroke="#30363d" stroke-width="3" />
+
+  <!-- Subtle elevated inner surface -->
+  <rect x="12" y="12" width="104" height="104" rx="21" fill="#161b22" />
+
+  <!-- Archive Top Lid (Lucide-style rounded container top) -->
+  <rect x="22" y="27" width="84" height="18" rx="5" fill="none" stroke="#f0f6fc" stroke-width="6" stroke-linejoin="round" />
+  <line x1="52" y1="36" x2="76" y2="36" stroke="#484f58" stroke-width="3.5" stroke-linecap="round" />
+
+  <!-- Archive Storage Body -->
+  <path d="M29 47v48a8 8 0 0 0 8 8h54a8 8 0 0 0 8-8V47" fill="none" stroke="#f0f6fc" stroke-width="6" stroke-linejoin="round" stroke-linecap="round" />
+
+  <!-- Integrated Emerald Check Mark (Remembered/Captured form memory) -->
+  <path d="M47 74 L58 85 L81 62" fill="none" stroke="#10b981" stroke-width="8.5" stroke-linecap="round" stroke-linejoin="round" />
+</svg>

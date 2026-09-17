@@ -57,7 +57,10 @@ export default defineBackground(() => {
     // Global & Site State Management Messages
     // ------------------------------------------------------------------------
     if (message?.type === 'SUBMITLOG_SET_GLOBAL_ENABLED') {
-      const enabled = Boolean(message.payload?.enabled);
+      const enabled =
+        typeof message.payload?.enabled === 'boolean'
+          ? message.payload.enabled
+          : Boolean(message.payload?.enabled);
       setGlobalEnabled(enabled)
         .then(() => {
           broadcastToTabs({
@@ -72,8 +75,8 @@ export default defineBackground(() => {
 
     if (message?.type === 'SUBMITLOG_GET_GLOBAL_ENABLED') {
       isGlobalEnabled()
-        .then((enabled) => sendResponse({ enabled }))
-        .catch(() => sendResponse({ enabled: true }));
+        .then((enabled) => sendResponse({ success: true, enabled }))
+        .catch((err) => sendResponse({ success: false, error: String(err) }));
       return true;
     }
 

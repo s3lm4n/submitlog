@@ -89,18 +89,44 @@ export async function setGlobalEnabled(enabled: boolean): Promise<void> {
   cachedGlobalEnabled = enabled;
   const storage = getStorageApi();
   if (!storage) return;
-  try {
-    await new Promise<void>((resolve) => {
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    try {
       const p = storage.set({ [STORAGE_KEY_GLOBAL_ENABLED]: enabled }, () => {
-        resolve();
+        const lastErr = (globalThis as unknown as { chrome?: { runtime?: { lastError?: Error } } })
+          .chrome?.runtime?.lastError;
+        if (lastErr) {
+          if (!settled) {
+            settled = true;
+            reject(new Error(lastErr.message || 'Storage write failed'));
+          }
+        } else if (!settled) {
+          settled = true;
+          resolve();
+        }
       });
       if (p && typeof (p as Promise<void>).then === 'function') {
-        (p as Promise<void>).then(resolve).catch(() => resolve());
+        (p as Promise<void>)
+          .then(() => {
+            if (!settled) {
+              settled = true;
+              resolve();
+            }
+          })
+          .catch((err) => {
+            if (!settled) {
+              settled = true;
+              reject(err);
+            }
+          });
       }
-    });
-  } catch {
-    // ignore
-  }
+    } catch (err) {
+      if (!settled) {
+        settled = true;
+        reject(err);
+      }
+    }
+  });
 }
 
 /**
@@ -159,18 +185,44 @@ export async function setSiteDisabled(hostname: string, disabled: boolean): Prom
 
   const storage = getStorageApi();
   if (!storage) return;
-  try {
-    await new Promise<void>((resolve) => {
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    try {
       const p = storage.set({ [STORAGE_KEY_DISABLED_SITES]: updated }, () => {
-        resolve();
+        const lastErr = (globalThis as unknown as { chrome?: { runtime?: { lastError?: Error } } })
+          .chrome?.runtime?.lastError;
+        if (lastErr) {
+          if (!settled) {
+            settled = true;
+            reject(new Error(lastErr.message || 'Storage write failed'));
+          }
+        } else if (!settled) {
+          settled = true;
+          resolve();
+        }
       });
       if (p && typeof (p as Promise<void>).then === 'function') {
-        (p as Promise<void>).then(resolve).catch(() => resolve());
+        (p as Promise<void>)
+          .then(() => {
+            if (!settled) {
+              settled = true;
+              resolve();
+            }
+          })
+          .catch((err) => {
+            if (!settled) {
+              settled = true;
+              reject(err);
+            }
+          });
       }
-    });
-  } catch {
-    // ignore
-  }
+    } catch (err) {
+      if (!settled) {
+        settled = true;
+        reject(err);
+      }
+    }
+  });
 }
 
 /**

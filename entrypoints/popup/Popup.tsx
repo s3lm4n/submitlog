@@ -29,7 +29,7 @@ import {
   PRIVATE_BROWSING_MESSAGE,
 } from '../../src/security/private-browsing-guard';
 import { checkPageSupported, RESTRICTED_PAGE_MESSAGE } from '../../src/security/page-guard';
-import { isGlobalEnabled, isSiteDisabled } from '../../src/storage/site-settings';
+import { isSiteDisabled } from '../../src/storage/site-settings';
 import { isBuiltInExcludedContext } from '../../src/security/page-exclusions';
 
 import { Button } from '@/components/ui/button';
@@ -38,6 +38,8 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
 import {
   ExternalLink,
   ShieldCheck,
@@ -45,6 +47,8 @@ import {
   AlertCircle,
   FileCheck2,
   Sparkles,
+  Power,
+  LoaderCircle,
 } from 'lucide-react';
 import './popup.css';
 
@@ -61,7 +65,11 @@ type PopupState =
 export function Popup() {
   const [state, setState] = useState<PopupState>('loading');
   const [isPaused, setIsPaused] = useState(false);
+  const [isTogglingPower, setIsTogglingPower] = useState(false);
+  const [powerError, setPowerError] = useState<string | null>(null);
   const [isSiteBlocked, setIsSiteBlocked] = useState(false);
+  const [isExcludedPage, setIsExcludedPage] = useState(false);
+  const [excludedCategory, setExcludedCategory] = useState('');
   const [hostname, setHostname] = useState('');
   const [pageTitle, setPageTitle] = useState('');
   const [pageUrl, setPageUrl] = useState('');
@@ -129,11 +137,28 @@ export function Popup() {
       setPageTitle(tab.title || url.hostname);
       setPageUrl(tab.url);
 
-      // 3. Global pause check
-      const globalOn = await isGlobalEnabled();
+      // 3. Authoritative global pause check via background runtime message
+      let globalOn: boolean;
+      try {
+        const globalRes = (await browser.runtime.sendMessage({
+          type: 'SUBMITLOG_GET_GLOBAL_ENABLED',
+        })) as { success?: boolean; enabled?: boolean } | undefined;
+        if (!globalRes || typeof globalRes.enabled !== 'boolean') {
+          setState('error');
+          setError('SubmitLog background service is unavailable. Please try again.');
+          return;
+        }
+        globalOn = globalRes.enabled;
+      } catch {
+        setState('error');
+        setError('SubmitLog background service is unavailable.');
+        return;
+      }
+
       if (!globalOn) {
         setIsPaused(true);
         setIsSiteBlocked(false);
+        setIsExcludedPage(false);
         setFormDetected(false);
         setTotalFields(0);
         setAnsweredCount(0);
@@ -143,10 +168,21 @@ export function Popup() {
       }
       setIsPaused(false);
 
-      // 4. Per-site disable check
-      const siteOff = await isSiteDisabled(url.hostname);
+      // 4. Per-site disable check via background
+      let siteOff = false;
+      try {
+        const siteRes = (await browser.runtime.sendMessage({
+          type: 'SUBMITLOG_IS_SITE_DISABLED',
+          payload: { hostname: url.hostname },
+        })) as { disabled?: boolean } | undefined;
+        siteOff = Boolean(siteRes?.disabled);
+      } catch {
+        siteOff = await isSiteDisabled(url.hostname);
+      }
+
       if (siteOff) {
         setIsSiteBlocked(true);
+        setIsExcludedPage(false);
         setFormDetected(false);
         setTotalFields(0);
         setAnsweredCount(0);
@@ -159,6 +195,8 @@ export function Popup() {
       // 5. Built-in excluded context check
       const excluded = isBuiltInExcludedContext({ hostname: url.hostname, pathname: url.pathname });
       if (excluded.isExcluded) {
+        setIsExcludedPage(true);
+        setExcludedCategory(excluded.category || 'safety exclusion');
         setFormDetected(false);
         setTotalFields(0);
         setAnsweredCount(0);
@@ -166,6 +204,7 @@ export function Popup() {
         setState('idle');
         return;
       }
+      setIsExcludedPage(false);
 
       // Scan all accessible frames within the tab
       const results = await browser.scripting.executeScript({
@@ -239,12 +278,25 @@ export function Popup() {
 
   useEffect(() => {
     const handleNotify = (msg: unknown) => {
-      const message = msg as { type?: string; result?: { status?: string } };
+      const message = msg as {
+        type?: string;
+        payload?: { enabled?: boolean; hostname?: string };
+        result?: { status?: string };
+      };
       if (message?.type === 'SUBMITLOG_AUTOSAVE_NOTIFY') {
         if (message.result?.status === 'saved') {
           setHasActiveDraft(true);
           scanCurrentTab();
         }
+      }
+      if (message?.type === 'SUBMITLOG_GLOBAL_STATE_CHANGED') {
+        if (typeof message.payload?.enabled === 'boolean') {
+          setIsPaused(!message.payload.enabled);
+          scanCurrentTab();
+        }
+      }
+      if (message?.type === 'SUBMITLOG_SITE_STATE_CHANGED') {
+        scanCurrentTab();
       }
     };
     browser.runtime.onMessage.addListener(handleNotify);
@@ -254,30 +306,55 @@ export function Popup() {
   }, [scanCurrentTab]);
 
   async function toggleGlobalPause() {
-    const next = !isPaused;
-    setIsPaused(next);
+    if (isTogglingPower) return;
+    setIsTogglingPower(true);
+    setPowerError(null);
+
+    const desiredEnabled = isPaused; // if paused, desired is enabled=true; if active, desired is enabled=false
+
     try {
-      await browser.runtime.sendMessage({
+      const response = (await browser.runtime.sendMessage({
         type: 'SUBMITLOG_SET_GLOBAL_ENABLED',
-        payload: { enabled: !next },
-      });
+        payload: { enabled: desiredEnabled },
+      })) as { success?: boolean; enabled?: boolean; error?: string } | undefined;
+
+      if (response && response.success === true && typeof response.enabled === 'boolean') {
+        setIsPaused(!response.enabled);
+      } else {
+        setPowerError(response?.error || 'Failed to update pause state.');
+      }
     } catch {
-      // ignore
+      setPowerError('Extension background service unavailable.');
+    } finally {
+      // Reconcile with authoritative state
+      try {
+        const authRes = (await browser.runtime.sendMessage({
+          type: 'SUBMITLOG_GET_GLOBAL_ENABLED',
+        })) as { enabled?: boolean } | undefined;
+        if (authRes && typeof authRes.enabled === 'boolean') {
+          setIsPaused(!authRes.enabled);
+        }
+      } catch {
+        // preserve current visual state if query fails
+      }
+      setIsTogglingPower(false);
+      await scanCurrentTab();
     }
-    await scanCurrentTab();
   }
 
   async function toggleSiteDisable() {
     if (!hostname) return;
     const next = !isSiteBlocked;
-    setIsSiteBlocked(next);
     try {
-      await browser.runtime.sendMessage({
+      const res = (await browser.runtime.sendMessage({
         type: 'SUBMITLOG_SET_SITE_DISABLED',
         payload: { hostname, disabled: next },
-      });
+      })) as { success?: boolean } | undefined;
+      if (res?.success) {
+        setIsSiteBlocked(next);
+      }
     } catch {
-      // ignore
+      setIsSiteBlocked(next);
     }
     await scanCurrentTab();
   }
@@ -524,45 +601,80 @@ export function Popup() {
     browser.tabs.create({ url });
   }
 
-  // Header component
+  // Header component with icon-only Power control
   const Header = (
     <div className="flex items-center justify-between">
       <div className="flex items-center gap-2">
         <h1 className="text-base font-semibold tracking-tight text-foreground">SubmitLog</h1>
-        {isPaused ? (
-          <Badge
-            variant="outline"
-            className="text-amber-600 dark:text-amber-400 border-amber-500/30 bg-amber-500/10 text-[10px] font-medium px-1.5 py-0 h-4.5"
-          >
-            Paused
-          </Badge>
-        ) : isSiteBlocked ? (
+        {isSiteBlocked && (
           <Badge
             variant="outline"
             className="text-muted-foreground border-border text-[10px] font-medium px-1.5 py-0 h-4.5"
           >
             Site disabled
           </Badge>
-        ) : (
-          <Badge
-            variant="outline"
-            className="text-emerald-600 dark:text-emerald-400 border-emerald-500/30 bg-emerald-500/10 text-[10px] font-medium px-1.5 py-0 h-4.5"
-          >
-            Active
-          </Badge>
         )}
       </div>
+
+      <div className="flex items-center gap-1">
+        <TooltipProvider delayDuration={300}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={isPaused ? 'Resume SubmitLog' : 'Pause SubmitLog'}
+                aria-pressed={!isPaused}
+                data-state={isPaused ? 'paused' : 'active'}
+                disabled={isTogglingPower}
+                onClick={toggleGlobalPause}
+                className={cn(
+                  'size-8 rounded-md transition-colors focus-visible:ring-1 focus-visible:ring-ring',
+                  isPaused
+                    ? 'text-red-500 dark:text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-500/10'
+                    : 'text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300 hover:bg-emerald-500/10',
+                  isTogglingPower && 'opacity-70 cursor-not-allowed',
+                )}
+              >
+                {isTogglingPower ? (
+                  <LoaderCircle className="size-4 animate-spin" />
+                ) : (
+                  <Power className="size-4" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              <p>{isPaused ? 'Resume SubmitLog' : 'Pause SubmitLog'}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={openArchive}
+          className="h-8 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground"
+        >
+          <span>Archive</span>
+          <ExternalLink className="size-3.5" />
+        </Button>
+      </div>
+    </div>
+  );
+
+  const PowerErrorNotice = powerError ? (
+    <div className="rounded-md bg-destructive/10 border border-destructive/20 px-2.5 py-1.5 text-xs text-destructive flex items-center justify-between gap-2">
+      <span>{powerError}</span>
       <Button
         variant="ghost"
         size="sm"
-        onClick={openArchive}
-        className="h-8 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground"
+        className="h-5 px-1 text-[11px] hover:bg-destructive/20"
+        onClick={() => setPowerError(null)}
       >
-        <span>Archive</span>
-        <ExternalLink className="size-3.5" />
+        Dismiss
       </Button>
     </div>
-  );
+  ) : null;
 
   // Privacy footer component
   const PrivacyFooter = (
@@ -576,6 +688,7 @@ export function Popup() {
     return (
       <div className="w-[430px] p-4 space-y-4">
         {Header}
+        {PowerErrorNotice}
         <Card className="p-4 space-y-3">
           <Skeleton className="h-4 w-32" />
           <Skeleton className="h-10 w-full" />
@@ -592,6 +705,7 @@ export function Popup() {
     return (
       <div className="w-[430px] p-4 space-y-4">
         {Header}
+        {PowerErrorNotice}
         <Card className="border-amber-500/30 bg-amber-500/5">
           <CardHeader className="p-4 pb-2">
             <CardTitle className="text-sm font-medium flex items-center gap-2 text-amber-700 dark:text-amber-400">
@@ -616,6 +730,7 @@ export function Popup() {
     return (
       <div className="w-[430px] p-4 space-y-4">
         {Header}
+        {PowerErrorNotice}
         <Card className="border-muted bg-muted/20">
           <CardHeader className="p-4 pb-2">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
@@ -640,6 +755,7 @@ export function Popup() {
     return (
       <div className="w-[430px] p-4 space-y-4">
         {Header}
+        {PowerErrorNotice}
         <Card className="border-destructive/30 bg-destructive/5">
           <CardHeader className="p-4 pb-2">
             <CardTitle className="text-sm font-medium text-destructive flex items-center gap-2">
@@ -667,6 +783,7 @@ export function Popup() {
     return (
       <div className="w-[430px] p-4 space-y-4 text-center">
         {Header}
+        {PowerErrorNotice}
         <Card className="p-6 space-y-2 bg-emerald-500/5 border-emerald-500/20">
           <div className="mx-auto flex size-10 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
             <CheckCircle2 className="size-5" />
@@ -864,21 +981,21 @@ export function Popup() {
     return (
       <div className="w-[430px] p-4 space-y-4">
         {Header}
+        {PowerErrorNotice}
 
-        <Card className="p-4 space-y-2 text-center bg-amber-500/5 border-amber-500/20">
+        <Card className="p-4 space-y-2 text-center bg-muted/30 border-muted">
           <CardTitle className="text-sm font-semibold text-foreground">
             SubmitLog is paused
           </CardTitle>
           <CardDescription className="text-xs text-muted-foreground leading-relaxed">
-            SubmitLog is not reading or saving form fields. No form data is captured or autosaved
-            while paused.
+            No form fields are being read or saved.
           </CardDescription>
+          <p className="text-[11px] text-muted-foreground/80 pt-1">
+            Click the power button to resume.
+          </p>
         </Card>
 
-        <div className="space-y-2">
-          <Button onClick={toggleGlobalPause} variant="default" className="w-full font-medium">
-            Resume SubmitLog
-          </Button>
+        <div>
           <Button onClick={openArchive} variant="outline" className="w-full">
             Open Archive
           </Button>
@@ -895,6 +1012,7 @@ export function Popup() {
     return (
       <div className="w-[430px] p-4 space-y-4">
         {Header}
+        {PowerErrorNotice}
 
         <Card className="p-4 space-y-2 text-center bg-muted/30 border-muted">
           <CardTitle className="text-xs font-mono font-medium text-muted-foreground truncate">
@@ -912,12 +1030,8 @@ export function Popup() {
           <Button onClick={toggleSiteDisable} variant="default" className="w-full font-medium">
             Enable on this site
           </Button>
-          <Button
-            onClick={toggleGlobalPause}
-            variant="ghost"
-            className="w-full text-xs text-muted-foreground h-8"
-          >
-            Pause SubmitLog globally
+          <Button onClick={openArchive} variant="outline" className="w-full">
+            Open Archive
           </Button>
         </div>
 
@@ -931,6 +1045,7 @@ export function Popup() {
   return (
     <div className="w-[430px] p-4 space-y-4">
       {Header}
+      {PowerErrorNotice}
 
       {fillFeedback && (
         <div className="rounded-md border border-emerald-500/20 bg-emerald-500/10 p-2.5 text-xs text-emerald-800 dark:text-emerald-300">
@@ -949,7 +1064,27 @@ export function Popup() {
         </div>
       )}
 
-      {!formDetected ? (
+      {isExcludedPage ? (
+        <>
+          <Card className="p-4 space-y-2 text-center bg-muted/30 border-muted">
+            <CardTitle className="text-xs font-mono font-normal text-muted-foreground truncate">
+              {hostname}
+            </CardTitle>
+            <div className="text-sm font-semibold text-foreground">
+              SubmitLog is inactive on this page.
+            </div>
+            <CardDescription className="text-xs text-muted-foreground leading-relaxed">
+              This page matches a built-in safety exclusion
+              {excludedCategory ? ` (${excludedCategory})` : ''}. Form detection and autosave are
+              disabled here.
+            </CardDescription>
+          </Card>
+
+          <Button variant="default" className="w-full" disabled={true}>
+            Capture submission
+          </Button>
+        </>
+      ) : !formDetected ? (
         <>
           <Card className="p-4 space-y-2 text-center bg-muted/20 border-muted">
             <CardTitle className="text-xs font-mono font-normal text-muted-foreground truncate">
@@ -1044,16 +1179,8 @@ export function Popup() {
         </>
       )}
 
-      <div className="flex items-center justify-between gap-2 pt-1 text-xs">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={toggleGlobalPause}
-          className="h-7 text-xs text-muted-foreground hover:text-foreground px-2"
-        >
-          Pause SubmitLog
-        </Button>
-        {hostname && (
+      {hostname && !isExcludedPage && (
+        <div className="flex items-center justify-end pt-1 text-xs">
           <Button
             variant="ghost"
             size="sm"
@@ -1062,8 +1189,8 @@ export function Popup() {
           >
             Disable on this site
           </Button>
-        )}
-      </div>
+        </div>
+      )}
 
       <Separator />
       {PrivacyFooter}

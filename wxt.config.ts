@@ -15,11 +15,16 @@ export default defineConfig({
     },
   }),
   manifest: ({ browser }) => {
-    const iconMap = {
+    const appIcons = {
       16: 'icons/icon-16.png',
       32: 'icons/icon-32.png',
       48: 'icons/icon-48.png',
       128: 'icons/icon-128.png',
+    };
+
+    const toolbarIcons = {
+      16: 'icons/toolbar-16.png',
+      32: 'icons/toolbar-32.png',
     };
 
     const baseManifest = {
@@ -27,10 +32,10 @@ export default defineConfig({
       description:
         'Never forget what you submitted. A local-first, privacy-first archive for web form submissions.',
       permissions: ['activeTab', 'scripting', 'storage'],
-      icons: iconMap,
+      icons: appIcons,
       action: {
         default_title: 'SubmitLog',
-        default_icon: iconMap,
+        default_icon: toolbarIcons,
       },
     };
 
@@ -40,7 +45,7 @@ export default defineConfig({
         permissions: ['activeTab', 'scripting', 'storage', 'http://*/*', 'https://*/*'],
         browser_action: {
           default_title: 'SubmitLog',
-          default_icon: iconMap,
+          default_icon: toolbarIcons,
         },
         browser_specific_settings: {
           gecko: {

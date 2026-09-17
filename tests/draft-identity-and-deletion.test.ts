@@ -829,7 +829,7 @@ describe('Draft Identity and Deletion Architecture', () => {
         pageTitle: 'Passport Application',
         pageUrl: `${origin}${pathname}`,
         formFingerprint: 'fp-passport',
-        field: { label: 'Passport Number', value: 'AB1234567', fieldType: 'text' },
+        field: { label: 'Application Reference', value: 'AB1234567', fieldType: 'text' },
         clientTimestamp: t0 - 5000,
         revision: 2,
       } as AutosaveFieldPayload,
@@ -863,7 +863,7 @@ describe('Draft Identity and Deletion Architecture', () => {
       pageTitle: 'Passport Application',
       pageUrl: `${origin}${pathname}`,
       formFingerprint: 'fp-passport',
-      field: { label: 'Passport Number', value: 'AB1234567', fieldType: 'text' },
+      field: { label: 'Application Reference', value: 'AB1234567', fieldType: 'text' },
       clientTimestamp: t0 - 2000, // Pre-deletion timestamp!
       revision: 2,
     };

@@ -57,10 +57,23 @@ export function scanPageForms(): InjectedScanResult {
     'cc-exp-month',
     'cc-exp-year',
     'cc-type',
+    'bday',
+    'bday-day',
+    'bday-month',
+    'bday-year',
   ];
 
   const SENSITIVE_PATTERN =
-    /password|passwd|pwd|otp|totp|mfa|cvv|cvc|cardnumber|card-number|card_number|cc-num|cc_num|secret|token|auth_token|ssn|social.?security|pin_code/i;
+    /password|passwd|pwd|passcode|otp|totp|mfa|2fa|cvv|cvc|csc|card.?number|credit.?card|cc.?num|secret|token|auth.?token|auth.?code|verification.?code|security.?code|pin.?code|pincode|one.?time|bank.?account|routing.?(?:num(?:ber)?|transit)|transit.?routing|aba.?routing|bank.?routing|iban|swift.?(?:code|bic|id|num(?:ber)?)|bic.?(?:swift|code)|(?:^|[^a-z0-9])bic(?:[0-9]*)(?:[^a-z0-9]|$)|tax.?id|taxpayer.?(?:id|identification)|date.?of.?birth|birth.?date|passport|driver.?s?.?lic(?:ense)?|driving.?lic(?:ense)?|ssn|social.?security|national.?(?:id|identity|insurance)|(?:^|[^a-z0-9])(?:dob|ein|tin)(?:[0-9]*)(?:[^a-z0-9]|$)/i;
+
+  function isSensitiveText(text: string): boolean {
+    if (!text) return false;
+    if (SENSITIVE_PATTERN.test(text)) return true;
+    const splitCamel = text.replace(/([a-z])([A-Z])/g, '$1 $2');
+    if (SENSITIVE_PATTERN.test(splitCamel)) return true;
+    const clean = text.replace(/[\s\-_]+/g, '');
+    return SENSITIVE_PATTERN.test(clean);
+  }
 
   const SEARCH_PATTERNS = /search|lookup|find|query|filter|nav|toolbar/i;
   const APPLICATION_PATTERNS =
@@ -98,7 +111,8 @@ export function scanPageForms(): InjectedScanResult {
             type !== 'submit' &&
             type !== 'button' &&
             type !== 'image' &&
-            type !== 'reset'
+            type !== 'reset' &&
+            type !== 'file'
           ) {
             isControl = true;
           }
@@ -191,16 +205,26 @@ export function scanPageForms(): InjectedScanResult {
     return false;
   }
 
-  function isSensitive(el: HTMLElement): boolean {
+  function isSensitive(el: HTMLElement, extractedLabel?: string): boolean {
     if (el instanceof HTMLInputElement) {
-      if (el.type === 'password' || el.type === 'hidden') return true;
+      if (el.type === 'password' || el.type === 'hidden' || el.type === 'file') return true;
     }
     const autocomplete = (el.getAttribute('autocomplete') || '').toLowerCase();
     for (const p of SENSITIVE_AUTOCOMPLETE) {
       if (autocomplete.includes(p)) return true;
     }
-    const combined = `${el.getAttribute('name') || ''} ${el.getAttribute('id') || ''} ${el.getAttribute('aria-label') || ''}`;
-    return SENSITIVE_PATTERN.test(combined);
+    const name = el.getAttribute('name') || '';
+    const id = el.id || '';
+    const ariaLabel = el.getAttribute('aria-label') || '';
+    if (
+      isSensitiveText(name) ||
+      isSensitiveText(id) ||
+      isSensitiveText(ariaLabel) ||
+      (extractedLabel && isSensitiveText(extractedLabel))
+    ) {
+      return true;
+    }
+    return false;
   }
 
   function normalizeAndCleanLabel(text: string): string {
@@ -707,14 +731,14 @@ export function scanPageForms(): InjectedScanResult {
     const detectedFields: InjectedDetectedField[] = [];
 
     for (const el of elements) {
-      if (isSensitive(el)) {
+      const label = getLabelText(el);
+      if (isSensitive(el, label)) {
         totalMeaningful++;
-        const sensLabel = getLabelText(el) || 'Sensitive Field';
+        const sensLabel = label || 'Sensitive Field';
         detectedFields.push({ label: sensLabel, fieldType: 'password', excluded: true });
         continue;
       }
 
-      const label = getLabelText(el);
       if (!label) continue;
 
       const role = el.getAttribute('role')?.toLowerCase();
@@ -916,10 +940,23 @@ export function capturePageForms(): InjectedCaptureResult {
     'cc-exp-month',
     'cc-exp-year',
     'cc-type',
+    'bday',
+    'bday-day',
+    'bday-month',
+    'bday-year',
   ];
 
   const SENSITIVE_PATTERN =
-    /password|passwd|pwd|otp|totp|mfa|cvv|cvc|cardnumber|card-number|card_number|cc-num|cc_num|secret|token|auth_token|ssn|social.?security|pin_code/i;
+    /password|passwd|pwd|passcode|otp|totp|mfa|2fa|cvv|cvc|csc|card.?number|credit.?card|cc.?num|secret|token|auth.?token|auth.?code|verification.?code|security.?code|pin.?code|pincode|one.?time|bank.?account|routing.?(?:num(?:ber)?|transit)|transit.?routing|aba.?routing|bank.?routing|iban|swift.?(?:code|bic|id|num(?:ber)?)|bic.?(?:swift|code)|(?:^|[^a-z0-9])bic(?:[0-9]*)(?:[^a-z0-9]|$)|tax.?id|taxpayer.?(?:id|identification)|date.?of.?birth|birth.?date|passport|driver.?s?.?lic(?:ense)?|driving.?lic(?:ense)?|ssn|social.?security|national.?(?:id|identity|insurance)|(?:^|[^a-z0-9])(?:dob|ein|tin)(?:[0-9]*)(?:[^a-z0-9]|$)/i;
+
+  function isSensitiveText(text: string): boolean {
+    if (!text) return false;
+    if (SENSITIVE_PATTERN.test(text)) return true;
+    const splitCamel = text.replace(/([a-z])([A-Z])/g, '$1 $2');
+    if (SENSITIVE_PATTERN.test(splitCamel)) return true;
+    const clean = text.replace(/[\s\-_]+/g, '');
+    return SENSITIVE_PATTERN.test(clean);
+  }
 
   const SEARCH_PATTERNS = /search|lookup|find|query|filter|nav|toolbar/i;
   const APPLICATION_PATTERNS =
@@ -957,7 +994,8 @@ export function capturePageForms(): InjectedCaptureResult {
             type !== 'submit' &&
             type !== 'button' &&
             type !== 'image' &&
-            type !== 'reset'
+            type !== 'reset' &&
+            type !== 'file'
           ) {
             isControl = true;
           }
@@ -1050,16 +1088,26 @@ export function capturePageForms(): InjectedCaptureResult {
     return false;
   }
 
-  function isSensitive(el: HTMLElement): boolean {
+  function isSensitive(el: HTMLElement, extractedLabel?: string): boolean {
     if (el instanceof HTMLInputElement) {
-      if (el.type === 'password' || el.type === 'hidden') return true;
+      if (el.type === 'password' || el.type === 'hidden' || el.type === 'file') return true;
     }
     const autocomplete = (el.getAttribute('autocomplete') || '').toLowerCase();
     for (const p of SENSITIVE_AUTOCOMPLETE) {
       if (autocomplete.includes(p)) return true;
     }
-    const combined = `${el.getAttribute('name') || ''} ${el.getAttribute('id') || ''} ${el.getAttribute('aria-label') || ''}`;
-    return SENSITIVE_PATTERN.test(combined);
+    const name = el.getAttribute('name') || '';
+    const id = el.id || '';
+    const ariaLabel = el.getAttribute('aria-label') || '';
+    if (
+      isSensitiveText(name) ||
+      isSensitiveText(id) ||
+      isSensitiveText(ariaLabel) ||
+      (extractedLabel && isSensitiveText(extractedLabel))
+    ) {
+      return true;
+    }
+    return false;
   }
 
   function normalizeAndCleanLabel(text: string): string {
@@ -1585,10 +1633,10 @@ export function capturePageForms(): InjectedCaptureResult {
     const labelsSeen = new Set<string>();
 
     for (const el of elements) {
-      if (isSensitive(el)) {
+      const labelInfo = getLabelText(el);
+      if (isSensitive(el, labelInfo)) {
         excludedCount++;
         totalMeaningful++;
-        const labelInfo = getLabelText(el);
         const fType =
           el instanceof HTMLTextAreaElement
             ? 'textarea'
@@ -1609,7 +1657,6 @@ export function capturePageForms(): InjectedCaptureResult {
         continue;
       }
 
-      const labelInfo = getLabelText(el);
       if (!labelInfo) continue; // Unknown Field Policy: exclude unlabeled controls
 
       const role = el.getAttribute('role')?.toLowerCase();

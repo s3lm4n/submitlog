@@ -13,6 +13,8 @@
  * 6. Never attaches to password, OTP, or sensitive fields.
  */
 
+import { isElementSensitive } from '../security/sensitive-patterns';
+
 export interface AssistantFieldStatus {
   matchingSubmissionId?: string;
   savedAnswer?: string;
@@ -41,41 +43,9 @@ export function initFieldAssistant(): { success: boolean } {
 
   window.__submitlog_assistant_active = true;
 
-  const SENSITIVE_AUTOCOMPLETE = [
-    'current-password',
-    'new-password',
-    'one-time-code',
-    'cc-number',
-    'cc-csc',
-    'cc-exp',
-    'cc-exp-month',
-    'cc-exp-year',
-    'cc-type',
-  ];
-
-  const SENSITIVE_PATTERN =
-    /password|passwd|pwd|otp|totp|mfa|cvv|cvc|card.?number|credit.?card|cc.?num|secret|token|auth.?token|ssn|social.?security|pin.?code|one.?time/i;
-
   function isSensitive(el: HTMLElement): boolean {
-    if (el instanceof HTMLInputElement) {
-      const type = (el.type || '').toLowerCase();
-      if (type === 'password' || type === 'hidden' || type === 'file') return true;
-      const ac = (el.autocomplete || '').toLowerCase();
-      if (SENSITIVE_AUTOCOMPLETE.some((s) => ac.includes(s))) return true;
-    }
-    const name = el.getAttribute('name') || '';
-    const id = el.id || '';
-    const ariaLabel = el.getAttribute('aria-label') || '';
-    const cleanLabel = (name + ' ' + id + ' ' + ariaLabel).replace(/[\s\-_]+/g, '');
-    if (
-      SENSITIVE_PATTERN.test(name) ||
-      SENSITIVE_PATTERN.test(id) ||
-      SENSITIVE_PATTERN.test(ariaLabel) ||
-      SENSITIVE_PATTERN.test(cleanLabel)
-    ) {
-      return true;
-    }
-    return false;
+    if (el instanceof HTMLInputElement && el.type === 'file') return true;
+    return isElementSensitive(el, extractLabel(el)).isSensitive;
   }
 
   function isEligibleField(

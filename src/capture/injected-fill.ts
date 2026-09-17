@@ -40,14 +40,27 @@ export function injectedFillForm(payload: FillPayload): FillResult {
     'cc-exp-month',
     'cc-exp-year',
     'cc-type',
+    'bday',
+    'bday-day',
+    'bday-month',
+    'bday-year',
   ];
 
   const SENSITIVE_PATTERN =
-    /password|passwd|pwd|otp|totp|mfa|cvv|cvc|cardnumber|card-number|card_number|cc-num|cc_num|secret|token|auth_token|ssn|social.?security|pin_code/i;
+    /password|passwd|pwd|passcode|otp|totp|mfa|2fa|cvv|cvc|csc|card.?number|credit.?card|cc.?num|secret|token|auth.?token|auth.?code|verification.?code|security.?code|pin.?code|pincode|one.?time|bank.?account|routing.?(?:num(?:ber)?|transit)|transit.?routing|aba.?routing|bank.?routing|iban|swift.?(?:code|bic|id|num(?:ber)?)|bic.?(?:swift|code)|(?:^|[^a-z0-9])bic(?:[0-9]*)(?:[^a-z0-9]|$)|tax.?id|taxpayer.?(?:id|identification)|date.?of.?birth|birth.?date|passport|driver.?s?.?lic(?:ense)?|driving.?lic(?:ense)?|ssn|social.?security|national.?(?:id|identity|insurance)|(?:^|[^a-z0-9])(?:dob|ein|tin)(?:[0-9]*)(?:[^a-z0-9]|$)/i;
 
-  function isSensitive(el: HTMLElement): boolean {
+  function isSensitiveText(text: string): boolean {
+    if (!text) return false;
+    if (SENSITIVE_PATTERN.test(text)) return true;
+    const splitCamel = text.replace(/([a-z])([A-Z])/g, '$1 $2');
+    if (SENSITIVE_PATTERN.test(splitCamel)) return true;
+    const clean = text.replace(/[\s\-_]+/g, '');
+    return SENSITIVE_PATTERN.test(clean);
+  }
+
+  function isSensitive(el: HTMLElement, extractedLabel?: string): boolean {
     if (el instanceof HTMLInputElement) {
-      if (el.type === 'password' || el.type === 'hidden') return true;
+      if (el.type === 'password' || el.type === 'hidden' || el.type === 'file') return true;
       const ac = (el.autocomplete || '').toLowerCase();
       if (SENSITIVE_AUTOCOMPLETE.some((s) => ac.includes(s))) return true;
     }
@@ -55,9 +68,10 @@ export function injectedFillForm(payload: FillPayload): FillResult {
     const id = el.id || '';
     const ariaLabel = el.getAttribute('aria-label') || '';
     if (
-      SENSITIVE_PATTERN.test(name) ||
-      SENSITIVE_PATTERN.test(id) ||
-      SENSITIVE_PATTERN.test(ariaLabel)
+      isSensitiveText(name) ||
+      isSensitiveText(id) ||
+      isSensitiveText(ariaLabel) ||
+      (extractedLabel && isSensitiveText(extractedLabel))
     ) {
       return true;
     }
@@ -266,17 +280,17 @@ export function injectedFillForm(payload: FillPayload): FillResult {
       continue;
     }
 
-    if (isSensitive(el)) {
+    const fieldLabel = extractLabel(el);
+    if (isSensitive(el, fieldLabel)) {
       result.sensitiveSkippedCount++;
       result.details.push({
-        label: extractLabel(el) || 'Sensitive Field',
+        label: fieldLabel || 'Sensitive Field',
         status: 'skipped_sensitive',
         reason: 'Excluded for security / sensitive field protection',
       });
       continue;
     }
 
-    const fieldLabel = extractLabel(el);
     const normLabel = normalize(fieldLabel);
     if (!normLabel) continue;
 
@@ -323,7 +337,7 @@ export function injectedFillForm(payload: FillPayload): FillResult {
   // 2. Process radio groups
   radioGroups.forEach((radios, groupName) => {
     // Check if any radio in group is sensitive
-    if (radios.some(isSensitive)) {
+    if (radios.some((r) => isSensitive(r, groupName))) {
       result.sensitiveSkippedCount++;
       result.details.push({
         label: groupName,

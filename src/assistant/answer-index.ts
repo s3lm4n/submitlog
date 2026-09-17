@@ -24,6 +24,197 @@ export function normalizeAnswerLabel(label: string): string {
     .trim();
 }
 
+export const SEMANTIC_MODIFIERS = [
+  'password',
+  'passcode',
+  'confirm',
+  'confirmation',
+  'previous',
+  'former',
+  'current',
+  'expected',
+  'desired',
+  'minimum',
+  'maximum',
+] as const;
+
+export function getSemanticModifiers(label: string): Set<string> {
+  const words = normalizeAnswerLabel(label).split(/\s+/);
+  const found = new Set<string>();
+  for (const w of words) {
+    if (w === 'password' || w === 'passcode') found.add('password');
+    if (w === 'confirm' || w === 'confirmation') found.add('confirm');
+    if (w === 'previous' || w === 'former') found.add('previous');
+    if (w === 'current') found.add('current');
+    if (w === 'expected' || w === 'desired') found.add('expected');
+    if (w === 'minimum' || w === 'min') found.add('minimum');
+    if (w === 'maximum' || w === 'max') found.add('maximum');
+  }
+  return found;
+}
+
+export function hasSemanticModifierConflict(labelA: string, labelB: string): boolean {
+  const modsA = getSemanticModifiers(labelA);
+  const modsB = getSemanticModifiers(labelB);
+  if (modsA.size !== modsB.size) return true;
+  for (const m of modsA) {
+    if (!modsB.has(m)) return true;
+  }
+  return false;
+}
+
+export const BENIGN_DESCRIPTORS = new Set(['url', 'link', 'profile', 'number', 'name', 'address']);
+
+export const STOP_WORDS = new Set([
+  'a',
+  'about',
+  'above',
+  'after',
+  'again',
+  'against',
+  'all',
+  'am',
+  'an',
+  'and',
+  'any',
+  'are',
+  'as',
+  'at',
+  'be',
+  'because',
+  'been',
+  'before',
+  'being',
+  'below',
+  'between',
+  'both',
+  'but',
+  'by',
+  'can',
+  'did',
+  'do',
+  'does',
+  'doing',
+  'down',
+  'during',
+  'each',
+  'few',
+  'for',
+  'from',
+  'further',
+  'had',
+  'has',
+  'have',
+  'having',
+  'he',
+  'her',
+  'here',
+  'hers',
+  'herself',
+  'him',
+  'himself',
+  'his',
+  'how',
+  'i',
+  'if',
+  'in',
+  'into',
+  'is',
+  'it',
+  'its',
+  'itself',
+  'just',
+  'me',
+  'more',
+  'most',
+  'my',
+  'myself',
+  'no',
+  'nor',
+  'not',
+  'now',
+  'of',
+  'off',
+  'on',
+  'once',
+  'only',
+  'or',
+  'other',
+  'our',
+  'ours',
+  'ourselves',
+  'out',
+  'over',
+  'own',
+  'same',
+  'she',
+  'should',
+  'so',
+  'some',
+  'such',
+  'than',
+  'that',
+  'the',
+  'their',
+  'theirs',
+  'them',
+  'themselves',
+  'then',
+  'there',
+  'these',
+  'they',
+  'this',
+  'those',
+  'through',
+  'to',
+  'too',
+  'under',
+  'until',
+  'up',
+  'very',
+  'was',
+  'we',
+  'were',
+  'what',
+  'when',
+  'where',
+  'which',
+  'while',
+  'who',
+  'whom',
+  'why',
+  'will',
+  'with',
+  'you',
+  'your',
+  'yours',
+  'yourself',
+  'yourselves',
+  'ever',
+  // Question-style and form prompt wrappers
+  'please',
+  'enter',
+  'provide',
+  'tell',
+  'us',
+  'input',
+]);
+
+export function getContentWords(label: string): string[] {
+  return normalizeAnswerLabel(label)
+    .split(/\s+/)
+    .filter((w) => w.length > 0 && !STOP_WORDS.has(w));
+}
+
+export function getSemanticBase(label: string): string {
+  const content = getContentWords(label);
+  if (content.length === 0) return '';
+  const filtered = content.filter((w) => !BENIGN_DESCRIPTORS.has(w));
+  // If stripping benign descriptors removed all tokens (e.g. label was just "Name" or "Address"), retain content words
+  const baseWords = filtered.length > 0 ? filtered : content;
+  return baseWords.join(' ');
+}
+
 export class AnswerIndex {
   private entries: Map<string, IndexedAnswer[]> = new Map();
 
@@ -105,11 +296,35 @@ export class AnswerIndex {
 
     let matches = this.entries.get(norm) || [];
 
-    // Fallback: check partial token overlap or containment if no exact match
+    // Fallback: semantic match only when exact match fails
     if (matches.length === 0) {
+      const targetBase = getSemanticBase(label);
+      const targetContentWords = getContentWords(label);
+
       for (const [key, list] of this.entries.entries()) {
-        if (norm.length >= 4 && (key.includes(norm) || norm.includes(key))) {
+        // Hard blocker: reject semantic modifier conflicts
+        if (hasSemanticModifierConflict(label, key)) continue;
+
+        // 1. Exact semantic-base match after stopword & benign-descriptor normalization
+        const keyBase = getSemanticBase(key);
+        if (targetBase && keyBase && targetBase === keyBase) {
           matches = matches.concat(list);
+          continue;
+        }
+
+        // 2. Conservative similarity for longer labels (both >= 3 content words, Dice >= 0.85)
+        const candidateContentWords = getContentWords(key);
+        if (targetContentWords.length >= 3 && candidateContentWords.length >= 3) {
+          const setA = new Set(targetContentWords);
+          const setB = new Set(candidateContentWords);
+          let common = 0;
+          for (const w of setA) {
+            if (setB.has(w)) common++;
+          }
+          const dice = (2 * common) / (setA.size + setB.size);
+          if (dice >= 0.85) {
+            matches = matches.concat(list);
+          }
         }
       }
     }

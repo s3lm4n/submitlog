@@ -5,6 +5,11 @@ import {
   calculateSignatureSimilarity,
   type FormFieldDescriptor,
 } from './form-fingerprint';
+import {
+  hasSemanticModifierConflict,
+  getContentWords,
+  getSemanticBase,
+} from '../assistant/answer-index';
 
 export interface FormMatchResult {
   isMatch: boolean;
@@ -34,7 +39,8 @@ export function areFieldTypesCompatible(typeA: string, typeB: string): boolean {
 }
 
 /**
- * Calculates token-level word overlap (Dice coefficient) between two normalized label strings.
+ * Calculates token-level word overlap (Dice coefficient) between two normalized label strings
+ * using semantic base matching, modifier conflict prevention, and conservative similarity.
  */
 export function calculateLabelSimilarity(labelA: string, labelB: string): number {
   const normA = normalizeLabel(labelA);
@@ -42,16 +48,35 @@ export function calculateLabelSimilarity(labelA: string, labelB: string): number
   if (normA === normB) return 1.0;
   if (!normA || !normB) return 0.0;
 
-  const wordsA = new Set(normA.split(' ').filter((w) => w.length > 0));
-  const wordsB = new Set(normB.split(' ').filter((w) => w.length > 0));
-  if (wordsA.size === 0 || wordsB.size === 0) return 0.0;
+  // 1. Semantic modifier conflict check (e.g. password, confirm, previous, former, current, expected)
+  if (hasSemanticModifierConflict(labelA, labelB)) {
+    return 0.0;
+  }
+
+  // 2. Exact semantic-base match after stopword / benign-descriptor normalization
+  const baseA = getSemanticBase(labelA);
+  const baseB = getSemanticBase(labelB);
+  if (baseA && baseB && baseA === baseB) {
+    return 1.0;
+  }
+
+  // 3. Conservative similarity for longer labels (both >= 3 content words, Dice >= 0.85)
+  const contentA = getContentWords(labelA);
+  const contentB = getContentWords(labelB);
+  if (contentA.length < 3 || contentB.length < 3) {
+    return 0.0;
+  }
+
+  const wordsA = new Set(contentA);
+  const wordsB = new Set(contentB);
 
   let common = 0;
   for (const w of wordsA) {
     if (wordsB.has(w)) common++;
   }
 
-  return (2 * common) / (wordsA.size + wordsB.size);
+  const dice = (2 * common) / (wordsA.size + wordsB.size);
+  return dice >= 0.85 ? dice : 0.0;
 }
 
 /**

@@ -51,8 +51,7 @@ export interface AutosaveResponse {
   error?: string;
 }
 
-const SENSITIVE_PATTERNS =
-  /password|passwd|pwd|otp|totp|mfa|cvv|cvc|card.?number|credit.?card|cc.?num|secret|token|auth.?token|auth.?code|verification.?code|security.?code|ssn|social.?security|pin.?code|one.?time/i;
+import { isSensitiveText, isElementSensitive } from '../security/sensitive-patterns';
 
 /**
  * Validates if a field candidate is sensitive and should never be autosaved.
@@ -62,38 +61,15 @@ export function isFieldSensitive(
   fieldType?: string,
 ): boolean {
   if (!labelOrElement) return false;
+  const fType = (fieldType || '').toLowerCase();
+  if (fType === 'password' || fType === 'file' || fType === 'hidden') return true;
+
   if (typeof labelOrElement !== 'string') {
-    const el = labelOrElement;
-    if (el instanceof HTMLInputElement) {
-      const type = (el.type || '').toLowerCase();
-      if (type === 'password' || type === 'file' || type === 'hidden') return true;
-      const ac = (el.autocomplete || '').toLowerCase();
-      if (
-        ac.includes('one-time-code') ||
-        ac.includes('current-password') ||
-        ac.includes('new-password') ||
-        ac.includes('cc-') ||
-        ac.includes('card')
-      ) {
-        return true;
-      }
-    }
-    const name = el.getAttribute('name') || '';
-    const id = el.id || '';
-    const ariaLabel = el.getAttribute('aria-label') || '';
-    const combined = `${name} ${id} ${ariaLabel}`;
-    return (
-      SENSITIVE_PATTERNS.test(combined) ||
-      SENSITIVE_PATTERNS.test(combined.replace(/[\s\-_]+/g, ''))
-    );
+    return isElementSensitive(labelOrElement).isSensitive;
   }
 
   const label = labelOrElement;
-  if ((fieldType || '').toLowerCase() === 'password') return true;
-  if ((fieldType || '').toLowerCase() === 'file') return true;
-  const cleanLabel = (label || '').replace(/[\s\-_]+/g, '');
-  if (SENSITIVE_PATTERNS.test(label || '') || SENSITIVE_PATTERNS.test(cleanLabel)) return true;
-  return false;
+  return isSensitiveText(label);
 }
 
 /**

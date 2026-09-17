@@ -1,8 +1,8 @@
 /**
- * Self-contained functions for injected event-delegated autosave.
- * Injected via browser.scripting.executeScript into the page context.
- * Cannot import external modules.
+ * Event-delegated autosave injected into the page context.
  */
+
+import { isElementSensitive } from '../security/sensitive-patterns';
 
 export interface ArmAutosaveOptions {
   editingSessionId: string;
@@ -49,38 +49,9 @@ export function injectedArmAutosave(options: ArmAutosaveOptions): { success: boo
   window.__submitlog_autosave_session = options;
   window.__submitlog_suppress_autosave = false;
 
-  const SENSITIVE_AUTOCOMPLETE = [
-    'current-password',
-    'new-password',
-    'one-time-code',
-    'cc-number',
-    'cc-csc',
-    'cc-exp',
-    'cc-exp-month',
-    'cc-exp-year',
-    'cc-type',
-  ];
-
-  const SENSITIVE_PATTERN =
-    /password|passwd|pwd|otp|totp|mfa|cvv|cvc|card.?number|credit.?card|cc.?num|secret|token|auth.?token|ssn|social.?security|pin.?code|one.?time/i;
-
-  function isSensitive(el: HTMLElement): boolean {
-    if (el instanceof HTMLInputElement) {
-      if (el.type === 'password' || el.type === 'hidden') return true;
-      const ac = (el.autocomplete || '').toLowerCase();
-      if (SENSITIVE_AUTOCOMPLETE.some((s) => ac.includes(s))) return true;
-    }
-    const name = el.getAttribute('name') || '';
-    const id = el.id || '';
-    const ariaLabel = el.getAttribute('aria-label') || '';
-    if (
-      SENSITIVE_PATTERN.test(name) ||
-      SENSITIVE_PATTERN.test(id) ||
-      SENSITIVE_PATTERN.test(ariaLabel)
-    ) {
-      return true;
-    }
-    return false;
+  function isSensitive(el: HTMLElement, extractedLabel?: string): boolean {
+    if (el instanceof HTMLInputElement && el.type === 'file') return true;
+    return isElementSensitive(el, extractedLabel).isSensitive;
   }
 
   function extractLabel(el: HTMLElement): string {
@@ -301,12 +272,13 @@ export function injectedArmAutosave(options: ArmAutosaveOptions): { success: boo
 
   window.__submitlog_autosave_flush = flushAllFields;
 
-  function processElementChange(target: HTMLElement, delayMs = 300, immediate = false) {
+  function processElementChange(
+    target: HTMLElement,
+    delayMs = 300,
+    immediate = false,
+    isUserEdit = false,
+  ) {
     if (window.__submitlog_suppress_autosave) return;
-    if (isSensitive(target)) return;
-
-    // A real user interaction has occurred, allow drafting again
-    isDraftDeleted = false;
 
     const isInput = target instanceof HTMLInputElement;
     const isTextArea = target instanceof HTMLTextAreaElement;
@@ -379,9 +351,19 @@ export function injectedArmAutosave(options: ArmAutosaveOptions): { success: boo
     }
 
     if (!label.trim()) return;
+    if (isSensitive(target, label)) return;
+
+    // A real user edit occurred, allow drafting again
+    if (isUserEdit) {
+      isDraftDeleted = false;
+    } else if (isDraftDeleted) {
+      // Focusout, blur, or non-edit interaction after deletion MUST NEVER recreate draft
+      return;
+    }
 
     const key = getFieldKey(label, fieldType);
     let state = pendingFields.get(key);
+
     if (!state) {
       state = {
         label: label.trim(),
@@ -398,8 +380,10 @@ export function injectedArmAutosave(options: ArmAutosaveOptions): { success: boo
 
     state.value = value.trim();
     state.dirty = true;
-    state.clientTimestamp = Date.now();
-    state.revision++;
+    if (isUserEdit) {
+      state.clientTimestamp = Date.now();
+      state.revision++;
+    }
 
     if (immediate || delayMs <= 0) {
       flushField(key);
@@ -424,7 +408,7 @@ export function injectedArmAutosave(options: ArmAutosaveOptions): { success: boo
         target.isContentEditable)
     ) {
       // Debounced write per field: 300ms after keystroke
-      processElementChange(target, 300, false);
+      processElementChange(target, 300, false, true);
     }
   };
 
@@ -437,8 +421,8 @@ export function injectedArmAutosave(options: ArmAutosaveOptions): { success: boo
         target.getAttribute('role') === 'textbox' ||
         target.isContentEditable)
     ) {
-      // Immediate finalization on blur/focusout: no debounce delay
-      processElementChange(target, 0, true);
+      // Immediate finalization on blur/focusout only if dirty: no debounce delay
+      processElementChange(target, 0, true, false);
     }
   };
 
@@ -446,7 +430,7 @@ export function injectedArmAutosave(options: ArmAutosaveOptions): { success: boo
     const target = e.target as HTMLElement | null;
     if (target && (target instanceof HTMLSelectElement || target instanceof HTMLInputElement)) {
       // Immediate flush on change
-      processElementChange(target, 0, true);
+      processElementChange(target, 0, true, true);
     }
   };
 
@@ -454,7 +438,7 @@ export function injectedArmAutosave(options: ArmAutosaveOptions): { success: boo
     const target = e.target as HTMLElement | null;
     const radioOrCheckbox = target?.closest<HTMLElement>('[role="radio"], [role="checkbox"]');
     if (radioOrCheckbox) {
-      setTimeout(() => processElementChange(radioOrCheckbox, 0, true), 0);
+      setTimeout(() => processElementChange(radioOrCheckbox, 0, true, true), 0);
     }
   };
 

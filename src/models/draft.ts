@@ -57,7 +57,8 @@ const TRACKING_PARAMS = [
 ];
 
 /**
- * Strips tracking query parameters and normalizes a pathname or URL for stable draft matching.
+ * Strips tracking query parameters, normalizes trailing slashes,
+ * and isolates hash-routed SPAs (e.g. /#/contact vs /#/jobs/55/apply) for stable draft matching.
  */
 export function normalizeDraftPathname(rawUrlOrPath: string): string {
   if (!rawUrlOrPath) return '/';
@@ -66,10 +67,20 @@ export function normalizeDraftPathname(rawUrlOrPath: string): string {
     for (const param of TRACKING_PARAMS) {
       url.searchParams.delete(param);
     }
+    let pathname = url.pathname.replace(/\/+$/, '') || '/';
+
+    // Support hash-routed SPAs (e.g. /#/contact, /#!/jobs/55/apply)
+    if (url.hash && (url.hash.startsWith('#/') || url.hash.startsWith('#!/'))) {
+      const hashPart = url.hash.replace(/^#!?/, '').split('?')[0] || '';
+      const hashClean = hashPart.replace(/\/+$/, '') || '/';
+      pathname = pathname === '/' ? hashClean : `${pathname}#${hashClean}`;
+    }
+
     const search = url.searchParams.toString();
-    return url.pathname + (search ? `?${search}` : '');
+    return pathname + (search ? `?${search}` : '');
   } catch {
-    const clean = rawUrlOrPath.split('#')[0] || '/';
+    const rawPart = rawUrlOrPath.split('#')[0] || '/';
+    const clean = rawPart.replace(/\/+$/, '') || '/';
     return clean;
   }
 }
